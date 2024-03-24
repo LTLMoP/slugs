@@ -6,6 +6,7 @@
 #include <boost/tuple/tuple.hpp>
 #include <boost/tuple/tuple_comparison.hpp>
 #include <functional>
+#include <unordered_map>
 #include <random>
 #include "subprocess.hpp"
 
@@ -13,10 +14,23 @@
 #include <cuddInt.h>
 #endif
 
+class hashDdNodeUIntPair {
+public:
+    std::size_t operator () (const std::pair<DdNode*,unsigned int> &p) const {
+        auto h1 = std::hash<size_t>{}((size_t)(p.first));
+        auto h2 = std::hash<unsigned int>{}(p.second);
+
+        // Mainly for demonstration purposes, i.e. works but is overly simple
+        // In the real world, use sth. like boost.hash_combine
+        return h1 ^ h2;
+    }
+};
+
+
 /**
  * A class for computing invariants implied by the maximally permissive strategy (and probably later a bit more)
  */
-template<class T> class XComputeInvariants : public T {
+template<class T, bool supportForDontCare> class XComputeInvariants : public T {
 protected:
 
     using T::initSys;
@@ -45,7 +59,7 @@ protected:
     std::string satSolver;
     int nofInvariants;
 
-    XComputeInvariants<T>(std::list<std::string> &filenames) : T(filenames) {
+    XComputeInvariants<T,supportForDontCare>(std::list<std::string> &filenames) : T(filenames) {
     }
 
     void init(std::list<std::string> &filenames) {
@@ -174,7 +188,7 @@ protected:
         }
 
         // Allocate negative example list
-        std::vector<std::vector<bool> > negativeExamples;
+        std::vector<std::vector<int> > negativeExamples; // +1: TRUE, -1: FALSE, 0: don't care
 
         // std::cerr << "TEST: ARTIFICIAL NEGATIVE EXAMPLE\n";
         // negativeExamples.push_back({false,false});
@@ -192,7 +206,7 @@ protected:
         while (true) {
 
             // Clause storage
-            std::vector<std::vector<int> > clauses;
+            std::list<std::vector<int> > clauses;
 
             // Allocate variables for invariant bases
             std::vector<int> startingVarsInvariantBases;
@@ -250,10 +264,10 @@ protected:
 
             for (unsigned int negativeExample=0;negativeExample<negativeExamples.size();negativeExample++) {
 
-                std::map<std::pair<DdNode*,unsigned int>,int> nodeToVarMapper;
+                std::unordered_map<std::pair<DdNode*,unsigned int>,int,hashDdNodeUIntPair> nodeToVarMapper;
                 nodeToVarMapper[std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0)] = ++nofVarsSoFar;
                 clauses.push_back({nofVarsSoFar});
-                std::set<std::pair<DdNode*,unsigned int>> doneList;
+                std::unordered_set<std::pair<DdNode*,unsigned int>,hashDdNodeUIntPair> doneList;
                 doneList.insert(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
                 std::list<std::pair<DdNode*,unsigned int>> todoList;
                 todoList.push_back(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
@@ -329,13 +343,13 @@ protected:
                             }
 
                             // Negative example the same as invariant base --> Follow only the negative example case.
-                            // otherwise follow both cases!
-                            if ((negativeExamples[negativeExample][thisNodeAndLevel.second]) ^ (edge==1)) {
+                            // otherwise follow both cases, also in the case of don't cares
+                            if (((negativeExamples[negativeExample][thisNodeAndLevel.second]==1) ^ (edge==1)) || (negativeExamples[negativeExample][thisNodeAndLevel.second]==0)) {
                                 // Take this one either way
                                 clauses.push_back({-1*currentNo,numNext});
                             } else {
                                 // Take this one conditionally
-                                int conditionLiteral = (negativeExamples[negativeExample][thisNodeAndLevel.second]?1:-1)*(startingVarsActiveBasesForEachNegativeExample[negativeExample]+thisNodeAndLevel.second);
+                                int conditionLiteral = (negativeExamples[negativeExample][thisNodeAndLevel.second])*(startingVarsActiveBasesForEachNegativeExample[negativeExample]+thisNodeAndLevel.second);
                                 clauses.push_back({conditionLiteral,-1*currentNo,numNext});
                             }
 
@@ -374,7 +388,7 @@ protected:
                 // Read model
                 std::istringstream is(stdoutBuffer.str());
                 std::string currentline;
-                std::unordered_set<int> model;
+                std::vector<bool> model(nofVarsSoFar+1);
                 while (std::getline(is,currentline)) {
                     //std::cerr << "Interpreting model line: " << currentline << std::endl;
                     if (currentline.substr(0,2)=="v ") {
@@ -383,7 +397,9 @@ protected:
                         while (!(modelreader.fail())) {
                             int next;
                             modelreader >> next;
-                            if (!modelreader.fail()) model.insert(next);
+                            if (!modelreader.fail()) {
+                                model[std::abs(next)] = next>0;
+                            }
                         }
                     }
                 }
@@ -401,13 +417,18 @@ protected:
                 }
                 for (unsigned int i=0;i<negativeExamples.size();i++) {
                     for (int j=0;j<nofInvariants;j++) {
-                        if (model.count(startingVarsInvariantSelectorForNegativeExample[i]+j)>0) {
+                        if (model[startingVarsInvariantSelectorForNegativeExample[i]+j]) {
                             //std::cerr << "Negative example " << i << " is covered by invariant " << j << std::endl;
 
                             BF thisCase = mgr.constantTrue();
                             for (unsigned int k=0;k<relevantCUDDVars.size();k++) {
-                                if (negativeExamples[i][k] == (model.count(startingVarsInvariantBases[j]+k)>0)) {
-                                    thisCase &= (negativeExamples[i][k]?relevantCUDDVarBFs[k]:!relevantCUDDVarBFs[k]);
+                                if (negativeExamples[i][k]!=0) {
+                                    if ((negativeExamples[i][k]>0) == (model[startingVarsInvariantBases[j]+k])) {
+                                        if (negativeExamples[i][k]>0)
+                                            thisCase &= relevantCUDDVarBFs[k];
+                                        else if (negativeExamples[i][k]<0)
+                                            thisCase &= !relevantCUDDVarBFs[k];
+                                    }
                                 }
                             }
                             invariants[j] &= !thisCase;
@@ -435,14 +456,14 @@ protected:
                     for (int i=0;i<nofInvariants;i++) {
                         std::cout << "- Invariant " << i << " with base: ";
                         for (unsigned int k=0;k<relevantCUDDVars.size();k++) {
-                            std::cout << ((model.count(startingVarsInvariantBases[i]+k)>0)?"1":"0");
+                            std::cout << ((model[startingVarsInvariantBases[i]+k]?"1":"0"));
                         }
                         std::cout << "\n";
                         for (unsigned int j=0;j<negativeExamples.size();j++) {
-                            if (model.count(startingVarsInvariantSelectorForNegativeExample[j]+i)>0) {
+                            if (model[startingVarsInvariantSelectorForNegativeExample[j]+i]) {
                                 std::cout << "  - Example ";
                                 for (auto it : negativeExamples[j]) {
-                                    if (it) std::cout << "1"; else std::cout << "0";
+                                    if (it>0) std::cout << "1"; else { if (it<0) std::cout << "0"; else std::cout << "?"; }
                                 }
                                 std::cout << "\n";
                             }
@@ -473,31 +494,38 @@ protected:
 
                 // Ok, so rest is not empty
                 // Compute new negative exaple
-                std::vector<bool> nextNegativeExample;
+                std::vector<int> nextNegativeExample;
                 for (unsigned int k=0;k<relevantCUDDVars.size();k++) {
                     // Which direction to prefer is random to make negative examples for uniform
-                    if (rng() & 1) {
-                        if ((rest & relevantCUDDVarBFs[k]).isFalse()) {
-                            nextNegativeExample.push_back(false);
-                            rest &= !relevantCUDDVarBFs[k];
+                    if (supportForDontCare && ((rest & relevantCUDDVarBFs[k]).ExistAbstractSingleVar(relevantCUDDVarBFs[k]) == (rest & !relevantCUDDVarBFs[k]).ExistAbstractSingleVar(relevantCUDDVarBFs[k]))) {
+                        // Dont't case!
+                        nextNegativeExample.push_back(0);
+                    } else  {
+                        if (rng() & 1) {
+                            if ((rest & relevantCUDDVarBFs[k]).isFalse()) {
+                                nextNegativeExample.push_back(-1);
+                                rest &= !relevantCUDDVarBFs[k];
+                            } else {
+                                nextNegativeExample.push_back(1);
+                                rest &= relevantCUDDVarBFs[k];
+                            }
                         } else {
-                            nextNegativeExample.push_back(true);
-                            rest &= relevantCUDDVarBFs[k];
-                        }
-                    } else {
-                        if ((rest & !relevantCUDDVarBFs[k]).isFalse()) {
-                            nextNegativeExample.push_back(true);
-                            rest &= relevantCUDDVarBFs[k];
-                        } else {
-                            nextNegativeExample.push_back(false);
-                            rest &= !relevantCUDDVarBFs[k];
+                            if ((rest & !relevantCUDDVarBFs[k]).isFalse()) {
+                                nextNegativeExample.push_back(1);
+                                rest &= relevantCUDDVarBFs[k];
+                            } else {
+                                nextNegativeExample.push_back(-1);
+                                rest &= !relevantCUDDVarBFs[k];
+                            }
                         }
                     }
+
+                    // TODO: Can this be done in a smarter way? Enumerating some cube instead?
                 }
 
                 std::cerr << "New negative example (no." << negativeExamples.size() << "): ";
                 for (auto it : nextNegativeExample) {
-                    if (it) std::cerr << "1"; else std::cerr << "0";
+                    if (it>0) std::cerr << "1"; else { if (it<0) std::cerr << "0"; else std::cerr << "?"; }
                 }
                 std::cerr << "\n";
 
@@ -520,322 +548,6 @@ protected:
         }
 
 
-#if 0
-
-        // Enumerate the Invariants
-        while (!(toBeCovered.isFalse())) {
-
-
-            // Start encoding
-            subprocess::popen cmd(lpSolver, {});
-
-            // Optimization criterion
-            std::ostream &cmdos = cmd.stdin();
-            cmdos << "max:";
-            for (unsigned int i=0;i<relevantCUDDVarNames.size();i++) {
-                if (i>0) cmdos << " +";
-                cmdos << " 1.0 w" << i;
-            }
-            cmdos << " - limit;\n";
-
-            // Weight limits
-            for (unsigned int i=0;i<relevantCUDDVarNames.size();i++) {
-                cmdos << "1 w" << i << " <= 1;\n";
-                cmdos << "-1 w" << i << " <= 1;\n";
-            }
-            cmdos << "-1 limit <= " << relevantCUDDVarNames.size() << ";\n";
-
-            // Find new assignment that needs to be covered
-            DdNode *assignmentToBeCovered = toBeCovered.getCuddNode();
-            bool first = true;
-            bool complemented = false;
-            DdNode *one = Cudd_ReadOne(toBeCovered.manager()->getMgr());
-            DdNode *zero = Cudd_Not(one);
-            std::cerr << "Invariant needed because of: ";
-            while (!(Cudd_IsConstant(assignmentToBeCovered))) {
-                if (reinterpret_cast<size_t>(assignmentToBeCovered) & 1) {
-                    complemented = !complemented;
-                    assignmentToBeCovered = Cudd_Regular(assignmentToBeCovered);
-                }
-                if (complemented) {
-                    if (Cudd_T(assignmentToBeCovered)==one) {
-                        assignmentToBeCovered = Cudd_E(assignmentToBeCovered);
-                        // Pick Else
-                    } else {
-                        // Pick Then
-                        if (!first) cmdos << " + ";
-                        std::cerr << cuddIndexToRelevantVarNumberMapper[assignmentToBeCovered->index] << " ";
-                        cmdos << "1 w" << cuddIndexToRelevantVarNumberMapper[assignmentToBeCovered->index];
-                        assignmentToBeCovered = Cudd_T(assignmentToBeCovered);
-                        first = false;
-
-                    }
-                } else {
-                    if (Cudd_T(assignmentToBeCovered)==zero) {
-                        // Pick Else
-                        assignmentToBeCovered = Cudd_E(assignmentToBeCovered);
-                        std::cerr << "0";
-                    } else {
-                        // Pick Then
-                        if (!first) cmdos << " + ";
-                        std::cerr << cuddIndexToRelevantVarNumberMapper[assignmentToBeCovered->index] << " ";
-                        cmdos << "1 w" << cuddIndexToRelevantVarNumberMapper[assignmentToBeCovered->index];
-                        assignmentToBeCovered = Cudd_T(assignmentToBeCovered);
-                        first = false;
-                    }
-                }
-            }
-            std::cerr << "\n";
-            cmdos << " -1 limit >= 0.0001;\n";
-
-            // Encode that everything that is a winning position needs to satisfy the linear inequality.
-            std::map<std::pair<DdNode*,unsigned int>,int> winningNodeToMaxAccumulatedValueMapper;
-            int nextNumWinningNodeToMaxAccumulatedValueMapper = 1;
-            std::set<std::pair<DdNode*,unsigned int>> doneList;
-            doneList.insert(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
-            std::list<std::pair<DdNode*,unsigned int>> todoList;
-            todoList.push_back(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
-            winningNodeToMaxAccumulatedValueMapper[std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0)] = 0;
-            cmdos << " 1 n0 >= 0;\n";
-            std::cerr << "digraph {\n\"n0\";\n";
-            while (todoList.size()!=0) {
-                std::pair<DdNode*,unsigned int> thisNodeAndLevel = todoList.front();
-                todoList.pop_front();
-                int currentNo = winningNodeToMaxAccumulatedValueMapper.at(thisNodeAndLevel);
-
-                if (Cudd_IsConstant(thisNodeAndLevel.first) && (thisNodeAndLevel.second==relevantCUDDVars.size())) {
-                    if (thisNodeAndLevel.first==one) {
-                        cmdos << "1 n" << currentNo << " -1 limit <= -0.001;\n"; // Need to satisfy
-                        std::cerr << "n" << currentNo << "[label=\"n" << currentNo << ",ONE\"];\n";
-                    } else {
-                        assert(thisNodeAndLevel.first==zero);
-                    }
-                } else if (Cudd_IsConstant(thisNodeAndLevel.first) ||
-                           (cuddIndexToRelevantVarNumberMapper[Cudd_Regular(thisNodeAndLevel.first)->index]!=thisNodeAndLevel.second)) {
-
-                    /* Case: Skipping a variable */
-                    std::pair<DdNode*,unsigned int> nextPair = thisNodeAndLevel;
-                    nextPair.second++;
-                    if (nextPair.second > relevantCUDDVarBFs.size()) {
-                        throw "Internal error: Went too low in the hierarchy.";
-                    }
-                    int numNext;
-                    if (doneList.count(nextPair)==0) {
-                        numNext = nextNumWinningNodeToMaxAccumulatedValueMapper++;
-                        winningNodeToMaxAccumulatedValueMapper[nextPair] = numNext;
-                        doneList.insert(nextPair);
-                        todoList.push_back(nextPair);
-                        cmdos << "1 n" << numNext << " >= -" << relevantCUDDVarNames.size() << ";\n";
-                    } else {
-                        numNext = winningNodeToMaxAccumulatedValueMapper[nextPair];
-                    }
-
-                    // Virtual "t" and "e" edges. Unclear which case is worse.
-                    //cmdos << " -1 n" << currentNo << " 1 w" << thisNodeAndLevel.second << " 1 n" << numNext << " >= 0;\n";
-                    cmdos << " -1 n" << currentNo << " -1 w" << thisNodeAndLevel.second << " 1 n" << numNext << " >= 0;\n";
-                    cmdos << " -1 n" << currentNo << " 1 n" << numNext << " >= 0;\n";
-
-
-                } else {
-                    std::cerr << "n" << currentNo << "[label=\"n" << currentNo << "," << thisNodeAndLevel.second << "\"];\n";
-                    DdNode *t;
-                    DdNode *e;
-                    if (reinterpret_cast<size_t>(thisNodeAndLevel.first) & 1) {
-                        t = Cudd_Not(Cudd_T(Cudd_Regular(thisNodeAndLevel.first)));
-                        e = Cudd_Not(Cudd_E(Cudd_Regular(thisNodeAndLevel.first)));
-                    } else {
-                        t = Cudd_T(thisNodeAndLevel.first);
-                        e = Cudd_E(thisNodeAndLevel.first);
-                    }
-
-                    for (int edge=0;edge<2;edge++) {
-                        std::pair<DdNode*,unsigned int> nextPair((edge==0)?t:e,thisNodeAndLevel.second+1);
-
-                        // Sanity check
-                        if (!Cudd_IsConstant(nextPair.first)) {
-                            int nextIndex = Cudd_Regular(nextPair.first)->index;
-                            if (cuddIndexToRelevantVarNumberMapper[nextIndex]<nextPair.second) {
-                                int thisIndex = Cudd_Regular(thisNodeAndLevel.first)->index;
-                                std::cerr << "ThisLevel: " << thisIndex << std::endl;
-                                throw "Internal error: Skipped a level.";
-                            }
-                        }
-
-                        int numNext;
-                        if (doneList.count(nextPair)==0) {
-                            numNext = nextNumWinningNodeToMaxAccumulatedValueMapper++;
-                            winningNodeToMaxAccumulatedValueMapper[nextPair] = numNext;
-                            doneList.insert(nextPair);
-                            todoList.push_back(nextPair);
-                            cmdos << "1 n" << numNext << " >= -" << relevantCUDDVarNames.size() << ";\n";
-                        } else {
-                            numNext = winningNodeToMaxAccumulatedValueMapper[nextPair];
-                        }
-                        cmdos << "1 n" << numNext;
-
-                        // Consider skipped indices as well.
-                        if (edge==0) cmdos << " -1 w" << thisNodeAndLevel.second;
-                        cmdos << " -1 n" << currentNo << " >= 0;\n"; // Maximum is sufficient
-
-                        std::cerr << "n" << currentNo << "-> n" << numNext;
-                        if (edge==1) std::cerr << "[style=dashed];\n";
-                        else std::cerr << ";\n";
-                    }
-
-                }
-            }
-            std::cerr << "}\n";
-            /** Debug-Printer for specific example*/
-            std::cerr << "Field:\n";
-            for (unsigned int y=0;y<8;y++) {
-                for (unsigned int x=0;x<32;x++) {
-                    BF dis = winningPositions;
-                    for (unsigned int bit=0;bit<5;bit++) {
-                        dis &= (x & (1<<bit))?relevantCUDDVarBFs[bit]:!relevantCUDDVarBFs[bit];
-                    }
-                    for (unsigned int bit=0;bit<3;bit++) {
-                        dis &= (y & (1<<bit))?relevantCUDDVarBFs[bit+5]:!relevantCUDDVarBFs[bit+5];
-                    }
-                    if (dis.isFalse()) std::cerr << "."; else std::cerr << "*";
-                }
-                std::cerr << "\n";
-            }
-
-            // Implement pairwise implications
-            for (auto it : variableImplications) {
-                cmdos << "1 w" << it.first << " 1 w" << it.second << " <= 1;\n";
-            }
-
-
-            // Finishing the encoding and reading the result.
-            cmd.close(); // Closes only inStream
-
-            std::ostringstream stdoutBuffer;
-            stdoutBuffer << cmd.stdout().rdbuf();
-
-            int retVal = cmd.wait();
-            if (retVal!=0) {
-                std::ostringstream stderrBuffer;
-                stderrBuffer << cmd.stderr().rdbuf();
-                std::ostringstream error;
-                error << stderrBuffer.str() << ", stdout: " << stdoutBuffer.str();
-                std::cerr << "BufSiz:" << error.str().length() << std::endl;
-                throw SlugsException(false,error.str());
-            }
-
-            // Ok, so we got a result. Let's parse
-            std::istringstream is(stdoutBuffer.str());
-            std::string thisLine;
-            bool gotModel = false;
-            std::vector<double> linearInequality(relevantCUDDVars.size());
-            double limitForLinearInequality;
-            while (std::getline(is,thisLine)) {
-                std::cerr << thisLine;
-                if (thisLine=="Actual values of the variables:") gotModel = true;
-                else if (gotModel) {
-                    std::istringstream is2(thisLine);
-                    char f;
-                    is2 >> f;
-                    if (!is2.fail()) {
-                        if (f=='w') {
-                            int numVar;
-                            is2 >> numVar;
-                            if (is2.fail()) throw "Error: couldn't parse number after 'w'.";
-
-                            double val;
-                            is2 >> val;
-                            if (is2.fail()) throw "Error: couldn't parse double value after 'w'.";
-                            std::cerr << "\nCult: " << numVar << " " << val << std::endl;
-                            linearInequality[numVar] = val;
-                        } else if (f=='l') {
-                            std::string rest;
-                            is2 >> rest;
-                            if (is2.fail()) throw "Error: couldn't parse 'number after 'limit'.";
-                            if (rest=="imit") {
-                                is2 >> limitForLinearInequality;
-                                if (is2.fail()) throw "Error: couldn't parse double limit";
-                                std::cerr << "\nCult-Limit: " << limitForLinearInequality << std::endl;
-                            }
-                        }
-                    }
-                }
-            }
-            if (!gotModel) throw SlugsException(false,"Could not compute LP model. Numerical inaccuracies are the likely problem.");
-
-            // Compute BDD for the linear inequality
-            std::map<double,BF> valueSoFarToValuationsMapper;
-            std::map<double,BF> valueSoFarToValuationsMapperNext;
-            valueSoFarToValuationsMapper[0.0] = winningPositions.manager()->constantTrue();
-            for (unsigned int i = 0;i<relevantCUDDVars.size();i++) {
-                valueSoFarToValuationsMapperNext.clear();
-                for (auto &it : valueSoFarToValuationsMapper) {
-                    // False case
-                    if (valueSoFarToValuationsMapperNext.count(it.first)==0) {
-                        valueSoFarToValuationsMapperNext[it.first] = it.second & !relevantCUDDVarBFs[i];
-                    } else {
-                        valueSoFarToValuationsMapperNext[it.first] |= it.second & !relevantCUDDVarBFs[i];
-                    }
-
-                    double targetCosts = it.first+linearInequality[i];
-                    if (valueSoFarToValuationsMapperNext.count(targetCosts)==0) {
-                        valueSoFarToValuationsMapperNext[targetCosts] = it.second & relevantCUDDVarBFs[i];
-                    } else {
-                        valueSoFarToValuationsMapperNext[targetCosts] |= it.second & relevantCUDDVarBFs[i];
-                    }
-                }
-                valueSoFarToValuationsMapper = valueSoFarToValuationsMapperNext;
-
-                std::cerr << "Level " << i << ":";
-                for (auto &it : valueSoFarToValuationsMapper) {
-                    std::cerr << " " << it.first;
-                    if (it.second.isFalse()) std::cerr << "(false)";
-                }
-                std::cerr << "\n";
-
-            }
-
-            // LIMIT....
-            BF stillallowed = winningPositions.manager()->constantFalse();
-            for (auto &it : valueSoFarToValuationsMapper) {
-                std::cerr << "Sum of Values: " << it.first << std::endl;
-                if (it.first<=limitForLinearInequality) {
-                    stillallowed |= it.second;
-
-                }
-                /*
-                std::ostringstream filename;
-                filename << "/tmp/stillallowed" << it.first << ".dot";
-                BF_newDumpDot(*this,it.second,NULL,filename.str());*/
-            }
-
-            BF_newDumpDot(*this,(winningPositions & !stillallowed),NULL,"/tmp/wrongcases.dot");
-            BF_newDumpDot(*this,(stillallowed),NULL,"/tmp/stillallowed.dot");
-
-            if (!((winningPositions & !stillallowed).isFalse())) throw "Erroneus encoded result.";
-
-            if ((toBeCovered & !stillallowed).isFalse()) throw "Error: Did not remove any new element from the set of states to be covered.";
-
-            BF_newDumpDot(*this,toBeCovered,NULL,"/tmp/coveredBefore.dot");
-            toBeCovered &= stillallowed;
-            BF_newDumpDot(*this,toBeCovered,NULL,"/tmp/coveredAfter.dot");
-
-
-            // Print invariant
-            std::cout << "Invariant:";
-            for (unsigned int i=0;i<relevantCUDDVarNames.size();i++) {
-                // Not yet here: Robustification of the constants
-                if (linearInequality[i]!=0.0) {
-                    std::cout << " " << linearInequality[i] << "*" << relevantCUDDVarNames[i];
-                }
-            }
-            std::cout << " <= " << limitForLinearInequality << std::endl;
-            std::cout.flush();
-
-        }
-#endif
-
-
-
 #else
         std::cerr << "This plugin is only supported for a CUDD backend.\n";
 #endif
@@ -848,7 +560,7 @@ protected:
 
 public:
     static GR1Context* makeInstance(std::list<std::string> &filenames) {
-        return new XComputeInvariants<T>(filenames);
+        return new XComputeInvariants<T,supportForDontCare>(filenames);
     }
 };
 
