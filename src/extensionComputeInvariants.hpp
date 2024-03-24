@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <random>
 #include "subprocess.hpp"
+#include "cadical.hpp"
 
 #ifdef CUDD
 #include <cuddInt.h>
@@ -203,57 +204,66 @@ protected:
         // Random number generator to randomize which negative countereaxmple to pick -- leads to sufficient diversity in the examples.
         std::mt19937 rng(123);
 
+        // Incremental solving
+        std::vector<int> startingVarsInvariantBases;
+        std::vector<int> startingVarsInvariantSelectorForNegativeExample;
+        std::vector<int> startingVarsActiveBasesForEachNegativeExample;
+        int nofVarsSoFar = 0;
+
+        // Allocate variables for invariant bases
+        for (int i=0;i<nofInvariants;i++) {
+#ifndef NDEBUG \
+    //std::cerr << "Starting var invariant base " << i << ": " << nofVarsSoFar+1 << std::endl;
+#endif
+            startingVarsInvariantBases.push_back(nofVarsSoFar+1);
+            nofVarsSoFar += relevantCUDDVars.size();
+        }
+
+        // Allocate SAT Solver
+        CaDiCaL::Solver solver;
+
+
+
         while (true) {
 
             // Clause storage
-            std::list<std::vector<int> > clauses;
-
-            // Allocate variables for invariant bases
-            std::vector<int> startingVarsInvariantBases;
-            int nofVarsSoFar = 0;
-            for (int i=0;i<nofInvariants;i++) {
-#ifndef NDEBUG
-                //std::cerr << "Starting var invariant base " << i << ": " << nofVarsSoFar+1 << std::endl;
-#endif
-                startingVarsInvariantBases.push_back(nofVarsSoFar+1);
-                nofVarsSoFar += relevantCUDDVars.size();
-            }
+            // std::list<std::vector<int> > clauses;
 
             // Allocate variables for selecting for each negative example which invariant is the right one
-            std::vector<int> startingVarsInvariantSelectorForNegativeExample;
-            for (unsigned int i=0;i<negativeExamples.size();i++) {
+            if (negativeExamples.size()>0) {
+                for (unsigned int i=negativeExamples.size()-1;i<negativeExamples.size();i++) {
 #ifndef NDEBUG
-                //std::cerr << "Selector for negative example " << i << ": " << nofVarsSoFar+1 << std::endl;
+                    //std::cerr << "Selector for negative example " << i << ": " << nofVarsSoFar+1 << std::endl;
 #endif
-                startingVarsInvariantSelectorForNegativeExample.push_back(nofVarsSoFar+1);
-                nofVarsSoFar += nofInvariants;
-            }
-
-            // Allocate variables for the active bases for each negative example
-            std::vector<int> startingVarsActiveBasesForEachNegativeExample;
-            for (unsigned int i=0;i<negativeExamples.size();i++) {
-#ifndef NDEBUG
-                //std::cerr << "Starting var for active base for negative example " << i << ": " << nofVarsSoFar+1 << std::endl;
-#endif
-                startingVarsActiveBasesForEachNegativeExample.push_back(nofVarsSoFar+1);
-                nofVarsSoFar += relevantCUDDVars.size();
-            }
-
-            // Every negative example needs to be covered by an invariant base
-            for (unsigned int i=0;i<negativeExamples.size();i++) {
-                std::vector<int> clauseSelector;
-                for (int j=0;j<nofInvariants;j++) {
-                    clauseSelector.push_back(startingVarsInvariantSelectorForNegativeExample[i]+j);
+                    startingVarsInvariantSelectorForNegativeExample.push_back(nofVarsSoFar+1);
+                    nofVarsSoFar += nofInvariants;
                 }
-                clauses.push_back(clauseSelector);
-            }
 
-            // Encode base selection
-            for (unsigned int i=0;i<negativeExamples.size();i++) {
-                for (int j=0;j<nofInvariants;j++) {
-                    for (int k=0;k<static_cast<int>(relevantCUDDVars.size());k++) {
-                        clauses.push_back({-1*startingVarsInvariantSelectorForNegativeExample[i]-j,-1*startingVarsActiveBasesForEachNegativeExample[i]-k,startingVarsInvariantBases[j]+k});
-                        clauses.push_back({-1*startingVarsInvariantSelectorForNegativeExample[i]-j,startingVarsActiveBasesForEachNegativeExample[i]+k,-1*startingVarsInvariantBases[j]-k});
+                // Allocate variables for the active bases for each negative example
+                for (unsigned int i=negativeExamples.size()-1;i<negativeExamples.size();i++) {
+#ifndef NDEBUG
+                    //std::cerr << "Starting var for active base for negative example " << i << ": " << nofVarsSoFar+1 << std::endl;
+#endif
+                    startingVarsActiveBasesForEachNegativeExample.push_back(nofVarsSoFar+1);
+                    nofVarsSoFar += relevantCUDDVars.size();
+                }
+
+                // Every negative example needs to be covered by an invariant base
+                for (unsigned int i=negativeExamples.size()-1;i<negativeExamples.size();i++) {
+                    std::vector<int> clauseSelector;
+                    for (int j=0;j<nofInvariants;j++) {
+                        solver.add(startingVarsInvariantSelectorForNegativeExample[i]+j);
+                    }
+                    solver.add(0);
+                }
+
+                // Encode base selection
+                for (unsigned int i=negativeExamples.size()-1;i<negativeExamples.size();i++) {
+                    for (int j=0;j<nofInvariants;j++) {
+                        for (int k=0;k<static_cast<int>(relevantCUDDVars.size());k++) {
+                            solver.clause(-1*startingVarsInvariantSelectorForNegativeExample[i]-j,-1*startingVarsActiveBasesForEachNegativeExample[i]-k,startingVarsInvariantBases[j]+k);
+                            solver.clause(-1*startingVarsInvariantSelectorForNegativeExample[i]-j,startingVarsActiveBasesForEachNegativeExample[i]+k,-1*startingVarsInvariantBases[j]-k);
+                        }
                     }
                 }
             }
@@ -262,76 +272,38 @@ protected:
             DdNode *one = Cudd_ReadOne(toBeCovered.manager()->getMgr());
             DdNode *zero = Cudd_Not(one);
 
-            for (unsigned int negativeExample=0;negativeExample<negativeExamples.size();negativeExample++) {
+            if (negativeExamples.size()>0) {
+                for (unsigned int negativeExample=negativeExamples.size()-1;negativeExample<negativeExamples.size();negativeExample++) {
 
-                std::unordered_map<std::pair<DdNode*,unsigned int>,int,hashDdNodeUIntPair> nodeToVarMapper;
-                nodeToVarMapper[std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0)] = ++nofVarsSoFar;
-                clauses.push_back({nofVarsSoFar});
-                std::unordered_set<std::pair<DdNode*,unsigned int>,hashDdNodeUIntPair> doneList;
-                doneList.insert(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
-                std::list<std::pair<DdNode*,unsigned int>> todoList;
-                todoList.push_back(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
-                // std::cerr << "digraph {\n\"n0\";\n";
-                while (todoList.size()!=0) {
-                    std::pair<DdNode*,unsigned int> thisNodeAndLevel = todoList.front();
-                    todoList.pop_front();
-                    int currentNo = nodeToVarMapper.at(thisNodeAndLevel);
+                    std::unordered_map<std::pair<DdNode*,unsigned int>,int,hashDdNodeUIntPair> nodeToVarMapper;
+                    nodeToVarMapper[std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0)] = ++nofVarsSoFar;
+                    solver.clause(nofVarsSoFar);
+                    std::unordered_set<std::pair<DdNode*,unsigned int>,hashDdNodeUIntPair> doneList;
+                    doneList.insert(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
+                    std::list<std::pair<DdNode*,unsigned int>> todoList;
+                    todoList.push_back(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
+                    // std::cerr << "digraph {\n\"n0\";\n";
+                    while (todoList.size()!=0) {
+                        std::pair<DdNode*,unsigned int> thisNodeAndLevel = todoList.front();
+                        todoList.pop_front();
+                        int currentNo = nodeToVarMapper.at(thisNodeAndLevel);
 
-                    if (Cudd_IsConstant(thisNodeAndLevel.first) && (thisNodeAndLevel.second==relevantCUDDVars.size())) {
-                        if (thisNodeAndLevel.first==one) {
-                            clauses.push_back({-1*currentNo});
-                            //std::cerr << "n" << currentNo << "[label=\"n" << currentNo << ",ONE\"];\n";
-                        } else {
-                            assert(thisNodeAndLevel.first==zero);
-                        }
-                    } else if (Cudd_IsConstant(thisNodeAndLevel.first) ||
-                               (cuddIndexToRelevantVarNumberMapper[Cudd_Regular(thisNodeAndLevel.first)->index]!=thisNodeAndLevel.second)) {
-
-                        /* Case: Skipping a variable */
-                        std::pair<DdNode*,unsigned int> nextPair = thisNodeAndLevel;
-                        nextPair.second++;
-                        if (nextPair.second > relevantCUDDVarBFs.size()) {
-                            throw "Internal error: Went too low in the hierarchy.";
-                        }
-                        int numNext;
-                        if (doneList.count(nextPair)==0) {
-                            numNext = ++nofVarsSoFar;
-                            nodeToVarMapper[nextPair] = numNext;
-                            doneList.insert(nextPair);
-                            todoList.push_back(nextPair);
-                        } else {
-                            numNext = nodeToVarMapper[nextPair];
-                        }
-
-                        // Negative example the same as invariant base --> Follow only the negative example case.
-                        // otherwise follow both cases!
-                        clauses.push_back({-1*currentNo,numNext});
-
-                    } else {
-                        //std::cerr << "n" << currentNo << "[label=\"n" << currentNo << "," << thisNodeAndLevel.second << "\"];\n";
-                        DdNode *t;
-                        DdNode *e;
-                        if (reinterpret_cast<size_t>(thisNodeAndLevel.first) & 1) {
-                            t = Cudd_Not(Cudd_T(Cudd_Regular(thisNodeAndLevel.first)));
-                            e = Cudd_Not(Cudd_E(Cudd_Regular(thisNodeAndLevel.first)));
-                        } else {
-                            t = Cudd_T(thisNodeAndLevel.first);
-                            e = Cudd_E(thisNodeAndLevel.first);
-                        }
-
-                        for (int edge=0;edge<2;edge++) {
-                            std::pair<DdNode*,unsigned int> nextPair((edge==0)?t:e,thisNodeAndLevel.second+1);
-
-                            // Sanity check
-                            if (!Cudd_IsConstant(nextPair.first)) {
-                                int nextIndex = Cudd_Regular(nextPair.first)->index;
-                                if (cuddIndexToRelevantVarNumberMapper[nextIndex]<nextPair.second) {
-                                    int thisIndex = Cudd_Regular(thisNodeAndLevel.first)->index;
-                                    std::cerr << "ThisLevel: " << thisIndex << std::endl;
-                                    throw "Internal error: Skipped a level.";
-                                }
+                        if (Cudd_IsConstant(thisNodeAndLevel.first) && (thisNodeAndLevel.second==relevantCUDDVars.size())) {
+                            if (thisNodeAndLevel.first==one) {
+                                solver.clause(-1*currentNo);
+                                //std::cerr << "n" << currentNo << "[label=\"n" << currentNo << ",ONE\"];\n";
+                            } else {
+                                assert(thisNodeAndLevel.first==zero);
                             }
+                        } else if (Cudd_IsConstant(thisNodeAndLevel.first) ||
+                                   (cuddIndexToRelevantVarNumberMapper[Cudd_Regular(thisNodeAndLevel.first)->index]!=thisNodeAndLevel.second)) {
 
+                            /* Case: Skipping a variable */
+                            std::pair<DdNode*,unsigned int> nextPair = thisNodeAndLevel;
+                            nextPair.second++;
+                            if (nextPair.second > relevantCUDDVarBFs.size()) {
+                                throw "Internal error: Went too low in the hierarchy.";
+                            }
                             int numNext;
                             if (doneList.count(nextPair)==0) {
                                 numNext = ++nofVarsSoFar;
@@ -343,30 +315,70 @@ protected:
                             }
 
                             // Negative example the same as invariant base --> Follow only the negative example case.
-                            // otherwise follow both cases, also in the case of don't cares
-                            if (((negativeExamples[negativeExample][thisNodeAndLevel.second]==1) ^ (edge==1)) || (negativeExamples[negativeExample][thisNodeAndLevel.second]==0)) {
-                                // Take this one either way
-                                clauses.push_back({-1*currentNo,numNext});
+                            // otherwise follow both cases!
+                            solver.clause(-1*currentNo,numNext);
+
+                        } else {
+                            //std::cerr << "n" << currentNo << "[label=\"n" << currentNo << "," << thisNodeAndLevel.second << "\"];\n";
+                            DdNode *t;
+                            DdNode *e;
+                            if (reinterpret_cast<size_t>(thisNodeAndLevel.first) & 1) {
+                                t = Cudd_Not(Cudd_T(Cudd_Regular(thisNodeAndLevel.first)));
+                                e = Cudd_Not(Cudd_E(Cudd_Regular(thisNodeAndLevel.first)));
                             } else {
-                                // Take this one conditionally
-                                int conditionLiteral = (negativeExamples[negativeExample][thisNodeAndLevel.second])*(startingVarsActiveBasesForEachNegativeExample[negativeExample]+thisNodeAndLevel.second);
-                                clauses.push_back({conditionLiteral,-1*currentNo,numNext});
+                                t = Cudd_T(thisNodeAndLevel.first);
+                                e = Cudd_E(thisNodeAndLevel.first);
                             }
 
-                            //std::cerr << "n" << currentNo << "-> n" << numNext;
-                            //if (edge==1) std::cerr << "[style=dashed];\n";
-                            //else std::cerr << ";\n";
-                        }
+                            for (int edge=0;edge<2;edge++) {
+                                std::pair<DdNode*,unsigned int> nextPair((edge==0)?t:e,thisNodeAndLevel.second+1);
 
+                                // Sanity check
+                                if (!Cudd_IsConstant(nextPair.first)) {
+                                    int nextIndex = Cudd_Regular(nextPair.first)->index;
+                                    if (cuddIndexToRelevantVarNumberMapper[nextIndex]<nextPair.second) {
+                                        int thisIndex = Cudd_Regular(thisNodeAndLevel.first)->index;
+                                        std::cerr << "ThisLevel: " << thisIndex << std::endl;
+                                        throw "Internal error: Skipped a level.";
+                                    }
+                                }
+
+                                int numNext;
+                                if (doneList.count(nextPair)==0) {
+                                    numNext = ++nofVarsSoFar;
+                                    nodeToVarMapper[nextPair] = numNext;
+                                    doneList.insert(nextPair);
+                                    todoList.push_back(nextPair);
+                                } else {
+                                    numNext = nodeToVarMapper[nextPair];
+                                }
+
+                                // Negative example the same as invariant base --> Follow only the negative example case.
+                                // otherwise follow both cases, also in the case of don't cares
+                                if (((negativeExamples[negativeExample][thisNodeAndLevel.second]==1) ^ (edge==1)) || (negativeExamples[negativeExample][thisNodeAndLevel.second]==0)) {
+                                    // Take this one either way
+                                    solver.clause(-1*currentNo,numNext);
+                                } else {
+                                    // Take this one conditionally
+                                    int conditionLiteral = (negativeExamples[negativeExample][thisNodeAndLevel.second])*(startingVarsActiveBasesForEachNegativeExample[negativeExample]+thisNodeAndLevel.second);
+                                    solver.clause(conditionLiteral,-1*currentNo,numNext);
+                                }
+
+                                //std::cerr << "n" << currentNo << "-> n" << numNext;
+                                //if (edge==1) std::cerr << "[style=dashed];\n";
+                                //else std::cerr << ";\n";
+                            }
+
+                        }
                     }
+                    //std::cerr << "}\n";
                 }
-                //std::cerr << "}\n";
             }
 
 
             // Run SAT solver
             // Start encoding
-            subprocess::popen cmd(satSolver, {});
+            /*subprocess::popen cmd(satSolver, {});
             std::ostream &cmdos = cmd.stdin();
             cmdos << "p cnf " << nofVarsSoFar << " " << clauses.size() << "\n";
             for (auto &it : clauses) {
@@ -380,16 +392,17 @@ protected:
             cmd.close(); // Closes only inStream
 
             std::ostringstream stdoutBuffer;
-            stdoutBuffer << cmd.stdout().rdbuf();
+            stdoutBuffer << cmd.stdout().rdbuf();*/
 
-            int retVal = cmd.wait();
-            if (retVal==10) {
+            auto retVal = solver.solve();
+            if (retVal==CaDiCaL::Status::SATISFIABLE) {
                 // Satisfiable!
                 // Read model
-                std::istringstream is(stdoutBuffer.str());
-                std::string currentline;
+                //std::istringstream is(stdoutBuffer.str());
+                //std::string currentline;
+
                 std::vector<bool> model(nofVarsSoFar+1);
-                while (std::getline(is,currentline)) {
+                /*while (std::getline(is,currentline)) {
                     //std::cerr << "Interpreting model line: " << currentline << std::endl;
                     if (currentline.substr(0,2)=="v ") {
                         // Read model
@@ -402,6 +415,9 @@ protected:
                             }
                         }
                     }
+                }*/
+                for (int i=1;i<=nofVarsSoFar;i++) {
+                    model[i] = solver.val(i)>0;
                 }
 
 #ifndef NDEBUG
@@ -536,12 +552,12 @@ protected:
                 std::cout << "Result: Cannot find " << nofInvariants << " covering the non-winning reachable states.\n";
                 return;
             } else {
-                std::ostringstream stderrBuffer;
-                stderrBuffer << "(" << retVal << ")" << cmd.stderr().rdbuf();
-                std::ostringstream error;
-                error << stderrBuffer.str() << ", stdout: " << stdoutBuffer.str();
-                std::cerr << "BufSiz:" << error.str().length() << std::endl;
-                throw SlugsException(false,error.str());
+                //std::ostringstream stderrBuffer;
+                //stderrBuffer << "(" << retVal << ")" << cmd.stderr().rdbuf();
+                //std::ostringstream error;
+                //error << stderrBuffer.str() << ", stdout: " << stdoutBuffer.str();
+                //std::cerr << "BufSiz:" << error.str().length() << std::endl;
+                throw SlugsException(false,"Solving Error");
             }
 
 
