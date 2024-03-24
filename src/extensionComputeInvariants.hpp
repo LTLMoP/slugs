@@ -8,7 +8,7 @@
 #include <functional>
 #include <unordered_map>
 #include <random>
-#include "subprocess.hpp"
+#include <algorithm>
 #include "cadical.hpp"
 
 #ifdef CUDD
@@ -59,6 +59,7 @@ protected:
 
     std::string satSolver;
     int nofInvariants;
+    std::vector<std::vector<int> > negativeExamples; // +1: TRUE, -1: FALSE, 0: don't care
 
     XComputeInvariants<T,supportForDontCare>(std::list<std::string> &filenames) : T(filenames) {
     }
@@ -72,12 +73,33 @@ protected:
 
         satSolver = filenames.front();
         filenames.pop_front();
-        std::cerr << "Using LP Solver: " << satSolver << std::endl;
+        std::cerr << "Using SAT Solver: " << satSolver << std::endl;
 
         std::istringstream is(filenames.front());
         filenames.pop_front();
         is >> nofInvariants;
         if (is.fail()) throw SlugsException(false, "Error: Could not parse the number of invariants.");
+
+        // Parse prepared negative examples
+        while (filenames.size()>0) {
+            std::vector<int> thisExample;
+            std::string thisOne = filenames.front();
+            filenames.pop_front();
+            std::cerr << "Data: " << thisOne << std::endl;
+            for (unsigned int i=0;i<thisOne.size();i++) {
+                if (thisOne[i]=='?') {
+                    thisExample.push_back(0);
+                } else if (thisOne[i]=='1') {
+                    thisExample.push_back(1);
+                } else if (thisOne[i]=='0') {
+                    thisExample.push_back(-1);
+                } else {
+                    throw SlugsException(false, "Error: Some pre-provided negative example does not only consider of the letters 01?");
+                }
+            }
+            negativeExamples.push_back(thisExample);
+        }
+
 
     }
 
@@ -188,8 +210,42 @@ protected:
             }
         }
 
-        // Allocate negative example list
-        std::vector<std::vector<int> > negativeExamples; // +1: TRUE, -1: FALSE, 0: don't care
+        // Compute the order of the variable names
+        std::vector<int> bfVariableNameOrder;
+        for (unsigned int i=0;i<relevantCUDDVarNames.size();i++) bfVariableNameOrder.push_back(i);
+        std::sort(bfVariableNameOrder.begin(), bfVariableNameOrder.end(),
+             [&](const int& left, const int& right) {
+                 return (relevantCUDDVarNames[left] < relevantCUDDVarNames[right]);
+             });
+        /*std::vector<int> bfVariableNameOrderInverse(bfVariableNameOrder.size());
+        for (unsigned int i=0;i<bfVariableNameOrder.size();i++) {
+            bfVariableNameOrderInverse[bfVariableNameOrder[i]] = i;
+        }*/
+
+
+        // Get the negative examples into the right order
+        // Check if all negative examples given already have the right size
+        for (unsigned int nofNE=0;nofNE<negativeExamples.size();nofNE++) {
+            std::vector<int> reversed(negativeExamples[nofNE].size());
+            for (unsigned int i=0;i<negativeExamples[nofNE].size();i++) {
+                reversed[bfVariableNameOrder[i]] = negativeExamples[nofNE][i];
+            }
+            negativeExamples[nofNE] = reversed;
+            if (reversed.size()!=relevantCUDDVarBFs.size()) {
+                std::cerr << "example size: " << reversed.size() << " wanted: " << relevantCUDDVarBFs.size() << "\n";
+                throw SlugsException(false,"Some of the negative examples pre-provided do not have the correct size!");
+            }
+        }
+
+
+
+        std::cerr << "Variable permutation:";
+        for (auto it : bfVariableNameOrder) std::cerr << " " << it;
+        std::cerr << "\n";
+        /*std::cerr << "Inverse Variable permutation:";
+        for (auto it : bfVariableNameOrderInverse) std::cerr << " " << it;
+        std::cerr << "\n";*/
+
 
         // std::cerr << "TEST: ARTIFICIAL NEGATIVE EXAMPLE\n";
         // negativeExamples.push_back({false,false});
@@ -221,7 +277,7 @@ protected:
 
         // Allocate SAT Solver
         CaDiCaL::Solver solver;
-
+        unsigned int nofNegativeExamplesProcessedSoFar = 0;
 
 
         while (true) {
@@ -231,7 +287,7 @@ protected:
 
             // Allocate variables for selecting for each negative example which invariant is the right one
             if (negativeExamples.size()>0) {
-                for (unsigned int i=negativeExamples.size()-1;i<negativeExamples.size();i++) {
+                for (unsigned int i=nofNegativeExamplesProcessedSoFar;i<negativeExamples.size();i++) {
 #ifndef NDEBUG
                     //std::cerr << "Selector for negative example " << i << ": " << nofVarsSoFar+1 << std::endl;
 #endif
@@ -240,7 +296,7 @@ protected:
                 }
 
                 // Allocate variables for the active bases for each negative example
-                for (unsigned int i=negativeExamples.size()-1;i<negativeExamples.size();i++) {
+                for (unsigned int i=nofNegativeExamplesProcessedSoFar;i<negativeExamples.size();i++) {
 #ifndef NDEBUG
                     //std::cerr << "Starting var for active base for negative example " << i << ": " << nofVarsSoFar+1 << std::endl;
 #endif
@@ -249,7 +305,7 @@ protected:
                 }
 
                 // Every negative example needs to be covered by an invariant base
-                for (unsigned int i=negativeExamples.size()-1;i<negativeExamples.size();i++) {
+                for (unsigned int i=nofNegativeExamplesProcessedSoFar;i<negativeExamples.size();i++) {
                     std::vector<int> clauseSelector;
                     for (int j=0;j<nofInvariants;j++) {
                         solver.add(startingVarsInvariantSelectorForNegativeExample[i]+j);
@@ -258,7 +314,7 @@ protected:
                 }
 
                 // Encode base selection
-                for (unsigned int i=negativeExamples.size()-1;i<negativeExamples.size();i++) {
+                for (unsigned int i=nofNegativeExamplesProcessedSoFar;i<negativeExamples.size();i++) {
                     for (int j=0;j<nofInvariants;j++) {
                         for (int k=0;k<static_cast<int>(relevantCUDDVars.size());k++) {
                             solver.clause(-1*startingVarsInvariantSelectorForNegativeExample[i]-j,-1*startingVarsActiveBasesForEachNegativeExample[i]-k,startingVarsInvariantBases[j]+k);
@@ -273,7 +329,7 @@ protected:
             DdNode *zero = Cudd_Not(one);
 
             if (negativeExamples.size()>0) {
-                for (unsigned int negativeExample=negativeExamples.size()-1;negativeExample<negativeExamples.size();negativeExample++) {
+                for (unsigned int negativeExample=nofNegativeExamplesProcessedSoFar;negativeExample<negativeExamples.size();negativeExample++) {
 
                     std::unordered_map<std::pair<DdNode*,unsigned int>,int,hashDdNodeUIntPair> nodeToVarMapper;
                     nodeToVarMapper[std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0)] = ++nofVarsSoFar;
@@ -375,6 +431,7 @@ protected:
                 }
             }
 
+            nofNegativeExamplesProcessedSoFar = negativeExamples.size();
 
             // Run SAT solver
             // Start encoding
@@ -540,7 +597,8 @@ protected:
                 }
 
                 std::cerr << "New negative example (no." << negativeExamples.size() << "): ";
-                for (auto it : nextNegativeExample) {
+                for (unsigned int i=0;i<nextNegativeExample.size();i++) {
+                    int it = nextNegativeExample[bfVariableNameOrder[i]];
                     if (it>0) std::cerr << "1"; else { if (it<0) std::cerr << "0"; else std::cerr << "?"; }
                 }
                 std::cerr << "\n";
