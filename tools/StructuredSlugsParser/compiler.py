@@ -208,9 +208,10 @@ def parseLTL(ltlTxt,reasonForNotBeingASlugsFormula):
         tree = p.parse(input)
 
     except p.ParseErrors as exception:
+        print("Offending specification line: ",ltlTxt,file=sys.stderr)
         for t,e in exception.errors:
             if t[0] == p.EOF:
-                print >>sys.stderr, "Formula end not expected here"
+                print("Formula end not expected here",file=sys.stderr)
                 continue
 
             found = repr(t[0])

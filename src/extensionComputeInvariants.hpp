@@ -46,6 +46,7 @@ protected:
     using T::mgr;
     using T::variables;
     using T::variableNames;
+    using T::getVariableNumbersOfType;
     using T::varVectorPre;
     using T::varVectorPost;
     using T::varCubePre;
@@ -125,7 +126,7 @@ protected:
         BF oldReachable = mgr.constantFalse();
         while (reachable!=oldReachable) {
             oldReachable = reachable;
-            reachable |= (safetyEnv & safetySys & reachable).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost);
+            reachable |= (safetyEnv & safetySys & reachable & winningPositions).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost);
             //BF_newDumpDot(*this,reachable,NULL,"/tmp/currentreachable.dot");
         }
 
@@ -266,6 +267,11 @@ protected:
         std::vector<int> startingVarsActiveBasesForEachNegativeExample;
         int nofVarsSoFar = 0;
 
+
+        // Allocate SAT Solver
+        CaDiCaL::Solver solver;
+        unsigned int nofNegativeExamplesProcessedSoFar = 0;
+
         // Allocate variables for invariant bases
         for (int i=0;i<nofInvariants;i++) {
 #ifndef NDEBUG \
@@ -275,9 +281,29 @@ protected:
             nofVarsSoFar += relevantCUDDVars.size();
         }
 
-        // Allocate SAT Solver
-        CaDiCaL::Solver solver;
-        unsigned int nofNegativeExamplesProcessedSoFar = 0;
+        // Symmetry breaking: Invariant bases must be lexicographically ordered
+        for (int i=0;i<nofInvariants-1;i++) {
+            int startingVarDiff = nofVarsSoFar+1;
+            nofVarsSoFar += relevantCUDDVars.size();
+
+            // Start
+            solver.clause(startingVarsInvariantBases[i],startingVarsInvariantBases[i+1],-1*startingVarDiff);
+            solver.clause(-1*startingVarsInvariantBases[i],-1*startingVarsInvariantBases[i+1],-1*startingVarDiff);
+            // Continue
+            for (unsigned int j=0;j<relevantCUDDVars.size()-1;j++) {
+                solver.clause(startingVarDiff+j,startingVarsInvariantBases[i]+j+1,startingVarsInvariantBases[i+1]+j+1,-1*startingVarDiff-j-1);
+                solver.clause(startingVarDiff+j,-1*startingVarsInvariantBases[i]-j-1,-1*startingVarsInvariantBases[i+1]-j-1,-1*startingVarDiff-j-1);
+            }
+
+            // If no diff before, lexicographical
+            // Start
+            solver.clause(-1*startingVarsInvariantBases[i],startingVarsInvariantBases[i+1]);
+            // Continue
+            for (unsigned int j=0;j<relevantCUDDVars.size()-1;j++) {
+                solver.clause(startingVarDiff+j,-1*startingVarsInvariantBases[i]-j-1,startingVarsInvariantBases[i+1]+j+1);
+            }
+        }
+
 
 
         while (true) {
@@ -458,7 +484,6 @@ protected:
                 //std::istringstream is(stdoutBuffer.str());
                 //std::string currentline;
 
-                std::vector<bool> model(nofVarsSoFar+1);
                 /*while (std::getline(is,currentline)) {
                     //std::cerr << "Interpreting model line: " << currentline << std::endl;
                     if (currentline.substr(0,2)=="v ") {
@@ -473,9 +498,6 @@ protected:
                         }
                     }
                 }*/
-                for (int i=1;i<=nofVarsSoFar;i++) {
-                    model[i] = solver.val(i)>0;
-                }
 
 #ifndef NDEBUG
                 //std::cerr << "Model read: ";
@@ -490,13 +512,13 @@ protected:
                 }
                 for (unsigned int i=0;i<negativeExamples.size();i++) {
                     for (int j=0;j<nofInvariants;j++) {
-                        if (model[startingVarsInvariantSelectorForNegativeExample[i]+j]) {
+                        if (solver.val(startingVarsInvariantSelectorForNegativeExample[i]+j)>0) {
                             //std::cerr << "Negative example " << i << " is covered by invariant " << j << std::endl;
 
                             BF thisCase = mgr.constantTrue();
                             for (unsigned int k=0;k<relevantCUDDVars.size();k++) {
                                 if (negativeExamples[i][k]!=0) {
-                                    if ((negativeExamples[i][k]>0) == (model[startingVarsInvariantBases[j]+k])) {
+                                    if ((negativeExamples[i][k]>0) == (solver.val(startingVarsInvariantBases[j]+k)>0)) {
                                         if (negativeExamples[i][k]>0)
                                             thisCase &= relevantCUDDVarBFs[k];
                                         else if (negativeExamples[i][k]<0)
@@ -521,6 +543,7 @@ protected:
                 }
 
                 BF rest = allInvariantsTogether & toBeCovered;
+                BF noNextBehavior = !((safetySys).ExistAbstract(varCubePostOutput));
 
                 if (rest.isFalse()) {
 
@@ -529,11 +552,11 @@ protected:
                     for (int i=0;i<nofInvariants;i++) {
                         std::cout << "- Invariant " << i << " with base: ";
                         for (unsigned int k=0;k<relevantCUDDVars.size();k++) {
-                            std::cout << ((model[startingVarsInvariantBases[i]+k]?"1":"0"));
+                            std::cout << ((solver.val(startingVarsInvariantBases[i]+k)>0?"1":"0"));
                         }
                         std::cout << "\n";
                         for (unsigned int j=0;j<negativeExamples.size();j++) {
-                            if (model[startingVarsInvariantSelectorForNegativeExample[j]+i]) {
+                            if (solver.val(startingVarsInvariantSelectorForNegativeExample[j]+i)>0) {
                                 std::cout << "  - Example ";
                                 for (auto it : negativeExamples[j]) {
                                     if (it>0) std::cout << "1"; else { if (it<0) std::cout << "0"; else std::cout << "?"; }
@@ -541,6 +564,8 @@ protected:
                                 std::cout << "\n";
                             }
                         }
+
+
                     }
 
                     // Generate and DOT-output optimizecd BDDs for the invariants
@@ -549,17 +574,47 @@ protected:
                         std::ostringstream filename;
                         filename << "/tmp/invariant" << i << ".dot";
 
-                        // Iterative simplification cycles
-                        BF oldsimplified = mgr.constantFalse();
+                        // Simplification
+                        //BF oldsimplified = mgr.constantFalse();
                         BF simplified = invariants[i];
-                        if (oldsimplified != simplified) {
-                            oldsimplified = simplified;
-                            simplified = simplified.optimizeRestrict(winningPositions | toBeCovered);
-                            simplified = simplified.optimizeRestrict(reachable | toBeCovered);
-                            //simplified = simplified.optimizeRestrict(reachable);
-                            simplified = simplified.optimizeRestrict((winningPositions & reachable) | toBeCovered);
+                        //if (oldsimplified != simplified) {
+                        //    oldsimplified = simplified;
+                        simplified = simplified.optimizeRestrict(reachable);
+                        //simplified = simplified.optimizeRestrict(reachable);
+                        //simplified = simplified.optimizeRestrict((winningPositions & reachable) | toBeCovered);
+                        //}
+                        BF_newDumpDot(*this,simplified /*& variables[12] & variables[6] & variables[8]*/,NULL,filename.str());
+
+                        std::ostringstream filename3;
+                        filename3 << "/tmp/invariant" << i << "-unoptimized.dot";
+                        BF_newDumpDot(*this,invariants[i],NULL,filename3.str());
+
+                        // Also print the cases of immediate specifiction violation separately
+                        std::ostringstream filename2;
+                        filename2 << "/tmp/invariant" << i << "-rightaway.dot";
+                        BF immediatelyViolated = !invariants[i] & reachable & noNextBehavior;
+                        BF_newDumpDot(*this,immediatelyViolated,NULL,filename2.str());
+
+                        // Globally Determinize case
+                        if (!(immediatelyViolated.isFalse())) {
+                            std::cout << "Reachable state immediately violating invariant " << i << " (using all variables declared in the input file in the order in which they are declared): ";
+                            std::vector<unsigned int> varNums;
+                            getVariableNumbersOfType("Pre", varNums);
+                            for (auto it : varNums) {
+                                if ((immediatelyViolated & variables[it]).isFalse()) {
+                                    std::cerr << "0";
+                                    immediatelyViolated &= !variables[it];
+                                } else {
+                                    std::cerr << "1";
+                                    immediatelyViolated &= variables[it];
+                                }
+                                if (immediatelyViolated.isFalse()) throw "Internal error processing 'immediatelyViolated'";
+                            }
+                            std::cout << "\n";
                         }
-                        BF_newDumpDot(*this,simplified,NULL,filename.str());
+
+
+
                     }
 
                     return;

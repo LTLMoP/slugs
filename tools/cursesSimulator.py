@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python2
 #
 # Interactive Strategy Simulator and Debugger for Slugs
 import curses, sys, subprocess

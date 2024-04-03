@@ -85,7 +85,7 @@ public:
     {
         int status = 0;
         pid_t ret = waitpid(pid, &status, 0);
-        if (ret==-1) {
+        if ((ret==-1) || (!(WIFEXITED(status)))) {
             return -1; // Signal error.
         }
         return WEXITSTATUS(status);

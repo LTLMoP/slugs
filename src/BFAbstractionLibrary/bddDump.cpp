@@ -13,7 +13,7 @@
 #include <fstream>
 #include <algorithm>
 #undef fail
-#define MAX_NODES_GRAPH 100
+#define MAX_NODES_GRAPH 300
 using namespace std;
 
 /**
@@ -241,6 +241,7 @@ void BF_newDumpDot(const VariableInfoContainer &cont, const BF &b, const char* v
 			else
 				dumpFile << "{ node [shape = box]; \"1\"; }}";
 		}
+        dumpFile << "\n";
 		
 		// Print the Connections
 		for (unsigned int i=0;i<vars.size();i++) {
