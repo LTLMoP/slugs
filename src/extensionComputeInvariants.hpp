@@ -121,23 +121,26 @@ protected:
 #endif
 
         // Compute states that are reachable when assumptions and guarantees are always satisfied.
-        BF reachable = initEnv & initSys;
-        BF_newDumpDot(*this,reachable,NULL,"/tmp/init.dot");
+        // ...both by going only through winning positions and not
+        BF reachableAndWinning = initEnv & initSys & winningPositions;
+        BF_newDumpDot(*this,reachableAndWinning,NULL,"/tmp/init.dot");
         BF oldReachable = mgr.constantFalse();
-        while (reachable!=oldReachable) {
-            oldReachable = reachable;
-            reachable |= (safetyEnv & safetySys & reachable & winningPositions).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost);
+        while (reachableAndWinning!=oldReachable) {
+            oldReachable = reachableAndWinning;
+            reachableAndWinning |= (safetyEnv & safetySys & reachableAndWinning).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost) & winningPositions;
             //BF_newDumpDot(*this,reachable,NULL,"/tmp/currentreachable.dot");
         }
+        BF reachableAndWinningOrFirstNonWinningStateReached = (safetyEnv & safetySys & reachableAndWinning).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost) | reachableAndWinning;
 
         // Compute which states need to be covered
         //BF statesReachingTransitions = (safetyEnv & safetySys).ExistAbstract(varCubePost);
 
+        // computing TildeB
+        BF tildeB = (!((safetyEnv & safetySys & reachableAndWinning).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost))) | reachableAndWinning;
 
-        BF toBeCovered = /*statesReachingTransitions & */ reachable & !winningPositions;
 #ifndef NDEBUG
-        BF_newDumpDot(*this,toBeCovered,NULL,"/tmp/tobecoveredoverall.dot");
-        BF_newDumpDot(*this,reachable,NULL,"/tmp/reachable.dot");
+        BF_newDumpDot(*this,!tildeB,NULL,"/tmp/tobecoveredoverall.dot");
+        BF_newDumpDot(*this,reachableAndWinning,NULL,"/tmp/reachableAndWinning.dot");
 #endif
 
         // In the following, we do an analysis over the BDD structure. Disable variable
@@ -168,7 +171,8 @@ protected:
                 getSupportRecurse(Cudd_E(current));
             };
             getSupportRecurse(winningPositions.getCuddNode());
-            getSupportRecurse(toBeCovered.getCuddNode());
+            getSupportRecurse(reachableAndWinning.getCuddNode());
+            getSupportRecurse(tildeB.getCuddNode());
 
             for (int varNoPermutation=0;varNoPermutation<mgr.getMgr()->size;varNoPermutation++) {
                 int targetNum = Cudd_ReadInvPerm(mgr.getMgr(),varNoPermutation);
@@ -193,23 +197,6 @@ protected:
             std::cerr << "- " << relevantCUDDVarNames[i] << std::endl;
         }
 #endif
-
-        // Find variable values implying other variable values to
-        // prevent tem "inflating" the constants in the linear programming instances
-        std::list<std::pair<unsigned int, unsigned int> > variableImplications;
-        for (unsigned int i=0;i<relevantCUDDVarNames.size();i++) {
-            for (unsigned int j=i+1;j<relevantCUDDVarNames.size();j++) {
-                if (i!=j) {
-                    BF possibility = (relevantCUDDVarBFs[i] & relevantCUDDVarBFs[j]) & reachable;
-                    if (possibility.isFalse()) {
-#ifndef NDEBUG
-                        std::cerr << "Impl: " << i << "," << j << std::endl;
-#endif
-                        variableImplications.push_back(std::pair<unsigned int, unsigned int>(i,j));
-                    }
-                }
-            }
-        }
 
         // Compute the order of the variable names
         std::vector<int> bfVariableNameOrder;
@@ -351,19 +338,19 @@ protected:
             }
 
             // Now encode that everything between the negative example and the base needs to map to 0 in the BDD
-            DdNode *one = Cudd_ReadOne(toBeCovered.manager()->getMgr());
+            DdNode *one = Cudd_ReadOne(reachableAndWinning.manager()->getMgr());
             DdNode *zero = Cudd_Not(one);
 
             if (negativeExamples.size()>0) {
                 for (unsigned int negativeExample=nofNegativeExamplesProcessedSoFar;negativeExample<negativeExamples.size();negativeExample++) {
 
                     std::unordered_map<std::pair<DdNode*,unsigned int>,int,hashDdNodeUIntPair> nodeToVarMapper;
-                    nodeToVarMapper[std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0)] = ++nofVarsSoFar;
+                    nodeToVarMapper[std::pair<DdNode*,unsigned int>(reachableAndWinning.getCuddNode(),0)] = ++nofVarsSoFar;
                     solver.clause(nofVarsSoFar);
                     std::unordered_set<std::pair<DdNode*,unsigned int>,hashDdNodeUIntPair> doneList;
-                    doneList.insert(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
+                    doneList.insert(std::pair<DdNode*,unsigned int>(reachableAndWinning.getCuddNode(),0));
                     std::list<std::pair<DdNode*,unsigned int>> todoList;
-                    todoList.push_back(std::pair<DdNode*,unsigned int>(winningPositions.getCuddNode(),0));
+                    todoList.push_back(std::pair<DdNode*,unsigned int>(reachableAndWinning.getCuddNode(),0));
                     // std::cerr << "digraph {\n\"n0\";\n";
                     while (todoList.size()!=0) {
                         std::pair<DdNode*,unsigned int> thisNodeAndLevel = todoList.front();
@@ -420,7 +407,8 @@ protected:
                                     int nextIndex = Cudd_Regular(nextPair.first)->index;
                                     if (cuddIndexToRelevantVarNumberMapper[nextIndex]<nextPair.second) {
                                         int thisIndex = Cudd_Regular(thisNodeAndLevel.first)->index;
-                                        std::cerr << "ThisLevel: " << thisIndex << std::endl;
+                                        std::cerr << "ThisLevel: " << thisIndex << "," << nextPair.second << std::endl;
+                                        std::cerr << "data index: " << cuddIndexToRelevantVarNumberMapper[nextIndex] << std::endl;
                                         throw "Internal error: Skipped a level.";
                                     }
                                 }
@@ -538,11 +526,11 @@ protected:
                 for (auto it : invariants) allInvariantsTogether &= it;
 
                 // Not check if we are done!
-                if (!((!allInvariantsTogether & winningPositions).isFalse())) {
+                if (!((!allInvariantsTogether & reachableAndWinning).isFalse())) {
                     throw SlugsException(false,"Internal Error: illegal invariants computed.");
                 }
 
-                BF rest = allInvariantsTogether & toBeCovered;
+                BF rest = allInvariantsTogether & !tildeB;
                 BF noNextBehavior = !((safetySys).ExistAbstract(varCubePostOutput));
 
                 if (rest.isFalse()) {
@@ -579,7 +567,7 @@ protected:
                         BF simplified = invariants[i];
                         //if (oldsimplified != simplified) {
                         //    oldsimplified = simplified;
-                        simplified = simplified.optimizeRestrict(reachable);
+                        simplified = simplified.optimizeRestrict(reachableAndWinningOrFirstNonWinningStateReached);
                         //simplified = simplified.optimizeRestrict(reachable);
                         //simplified = simplified.optimizeRestrict((winningPositions & reachable) | toBeCovered);
                         //}
@@ -592,7 +580,7 @@ protected:
                         // Also print the cases of immediate specifiction violation separately
                         std::ostringstream filename2;
                         filename2 << "/tmp/invariant" << i << "-rightaway.dot";
-                        BF immediatelyViolated = !invariants[i] & reachable & noNextBehavior;
+                        BF immediatelyViolated = !invariants[i] & reachableAndWinningOrFirstNonWinningStateReached & noNextBehavior;
                         BF_newDumpDot(*this,immediatelyViolated,NULL,filename2.str());
 
                         // Globally Determinize case
