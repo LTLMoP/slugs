@@ -357,7 +357,7 @@ protected:
             DdNode *one = Cudd_ReadOne(reachableAndWinning.manager()->getMgr());
             DdNode *zero = Cudd_Not(one);
 
-            DdNode *bddForInvariantCorrectnessEncoding = winningPositions.getCuddNode();
+            DdNode *bddForInvariantCorrectnessEncoding = reachableAndWinning.getCuddNode();
 
             if (negativeExamples.size()>0) {
                 for (unsigned int negativeExample=nofNegativeExamplesProcessedSoFar;negativeExample<negativeExamples.size();negativeExample++) {
@@ -544,7 +544,7 @@ protected:
                 for (auto it : invariants) allInvariantsTogether &= it;
 
                 // Not check if we are done!
-                if (!((!allInvariantsTogether & winningPositions).isFalse())) {
+                if (!((!allInvariantsTogether & reachableAndWinning).isFalse())) {
                     throw SlugsException(false,"Internal Error: illegal invariants computed.");
                 }
 
@@ -571,8 +571,6 @@ protected:
                                 std::cout << "\n";
                             }
                         }
-
-
                     }
 
                     // Generate and DOT-output optimizecd BDDs for the invariants
