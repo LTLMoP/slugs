@@ -8,6 +8,7 @@
 #include <functional>
 #include <unordered_map>
 #include <random>
+#include <fstream>
 #include <algorithm>
 #include "cadical.hpp"
 
@@ -120,10 +121,23 @@ protected:
         BF_newDumpDot(*this,winningPositions,NULL,"/tmp/winningpositions.dot");
 #endif
 
+        mgr.setAutomaticOptimisation(false);
+
+
+        //BF reachableOldStyle; // = initEnv & initSys & winningPositions;
+        //BF_newDumpDot(*this,reachableOldStyle,NULL,"/tmp/initOld.dot");
+        //BF oldReachable = mgr.constantFalse();
+        /*while (reachableOldStyle!=oldReachable) {
+            oldReachable = reachableOldStyle;
+            reachableOldStyle |= (safetyEnv & safetySys & reachableOldStyle & winningPositions).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost);
+            //BF_newDumpDot(*this,reachable,NULL,"/tmp/currentreachable.dot");
+        }*/
+
+
         // Compute states that are reachable when assumptions and guarantees are always satisfied.
         // ...both by going only through winning positions and not
         BF reachableAndWinning = initEnv & initSys & winningPositions;
-        BF_newDumpDot(*this,reachableAndWinning,NULL,"/tmp/init.dot");
+        //BF_newDumpDot(*this,reachableAndWinning,NULL,"/tmp/init.dot");
         BF oldReachable = mgr.constantFalse();
         while (reachableAndWinning!=oldReachable) {
             oldReachable = reachableAndWinning;
@@ -131,6 +145,8 @@ protected:
             //BF_newDumpDot(*this,reachable,NULL,"/tmp/currentreachable.dot");
         }
         BF reachableAndWinningOrFirstNonWinningStateReached = (safetyEnv & safetySys & reachableAndWinning).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost) | reachableAndWinning;
+
+        //reachableOldStyle = reachableAndWinningOrFirstNonWinningStateReached;
 
         // Compute which states need to be covered
         //BF statesReachingTransitions = (safetyEnv & safetySys).ExistAbstract(varCubePost);
@@ -341,16 +357,18 @@ protected:
             DdNode *one = Cudd_ReadOne(reachableAndWinning.manager()->getMgr());
             DdNode *zero = Cudd_Not(one);
 
+            DdNode *bddForInvariantCorrectnessEncoding = winningPositions.getCuddNode();
+
             if (negativeExamples.size()>0) {
                 for (unsigned int negativeExample=nofNegativeExamplesProcessedSoFar;negativeExample<negativeExamples.size();negativeExample++) {
 
                     std::unordered_map<std::pair<DdNode*,unsigned int>,int,hashDdNodeUIntPair> nodeToVarMapper;
-                    nodeToVarMapper[std::pair<DdNode*,unsigned int>(reachableAndWinning.getCuddNode(),0)] = ++nofVarsSoFar;
+                    nodeToVarMapper[std::pair<DdNode*,unsigned int>(bddForInvariantCorrectnessEncoding,0)] = ++nofVarsSoFar;
                     solver.clause(nofVarsSoFar);
                     std::unordered_set<std::pair<DdNode*,unsigned int>,hashDdNodeUIntPair> doneList;
-                    doneList.insert(std::pair<DdNode*,unsigned int>(reachableAndWinning.getCuddNode(),0));
+                    doneList.insert(std::pair<DdNode*,unsigned int>(bddForInvariantCorrectnessEncoding,0));
                     std::list<std::pair<DdNode*,unsigned int>> todoList;
-                    todoList.push_back(std::pair<DdNode*,unsigned int>(reachableAndWinning.getCuddNode(),0));
+                    todoList.push_back(std::pair<DdNode*,unsigned int>(bddForInvariantCorrectnessEncoding,0));
                     // std::cerr << "digraph {\n\"n0\";\n";
                     while (todoList.size()!=0) {
                         std::pair<DdNode*,unsigned int> thisNodeAndLevel = todoList.front();
@@ -526,11 +544,12 @@ protected:
                 for (auto it : invariants) allInvariantsTogether &= it;
 
                 // Not check if we are done!
-                if (!((!allInvariantsTogether & reachableAndWinning).isFalse())) {
+                if (!((!allInvariantsTogether & winningPositions).isFalse())) {
                     throw SlugsException(false,"Internal Error: illegal invariants computed.");
                 }
 
-                BF rest = allInvariantsTogether & !tildeB;
+                // TODO: Why is the next one different from using !tildeB?
+                BF rest = allInvariantsTogether & !tildeB; // !winningPositions & reachableAndWinningOrFirstNonWinningStateReached;
                 BF noNextBehavior = !((safetySys).ExistAbstract(varCubePostOutput));
 
                 if (rest.isFalse()) {
@@ -600,6 +619,218 @@ protected:
                             }
                             std::cout << "\n";
                         }
+                    }
+
+                    // Generate SyGuS Instance
+                    for (int i=0;i<nofInvariants;i++) {
+                        std::ostringstream outFileName;
+                        outFileName << "/tmp/invariant" << i << ".sygus";
+                        std::ofstream sygusFile(outFileName.str());
+                        sygusFile << "; Reactive Synthesis Invariant computation instance for invariant no. " << i << "\n; Variables (renamed):\n";
+                        for (unsigned j = 0;j<relevantCUDDVarNames.size();j++) {
+                            sygusFile << "; var " << j << ": " << relevantCUDDVarNames[j] << "\n";
+                        }
+
+                        // SyGuS File initial few lines
+                        sygusFile << "( set-logic LRA )\n(synth-fun f (";
+                        for (unsigned j = 0;j<relevantCUDDVarNames.size();j++) {
+                            sygusFile << "(v" << j << " Bool)";
+                        }
+                        sygusFile << ") Bool"
+                             "(( B Bool ))"
+                                     "(( B Bool (";
+                        for (unsigned j = 0;j<relevantCUDDVarNames.size();j++) {
+                            sygusFile << "v" << j << " ";
+                        }
+                        sygusFile << "(not B )"
+                                " (or B )"
+                                " (and B))"
+                                     ")))\n";
+
+                        // Negative examples first
+                        for (unsigned int j=0;j<negativeExamples.size();j++) {
+                            if (solver.val(startingVarsInvariantSelectorForNegativeExample[j]+i)>0) {
+                                sygusFile << "( constraint (= ( f";
+                                for (unsigned int k=0;k<negativeExamples[j].size();k++) {
+                                    if (negativeExamples[j][k]>0) {
+                                        sygusFile << " true";
+                                    } else {
+                                        sygusFile << " false";
+                                    }
+                                }
+                                sygusFile << ") false))\n";
+                            }
+                        }
+
+
+                        // BDD: recurse
+                        /*
+                        std::unordered_set<DdNode *> doneSet;
+
+                        std::function<void(DdNode*)> recurseFn = [&doneSet, &sygusFile, &relevantCUDDVarBFs, &recurseFn](DdNode * d) {
+
+                            if (doneSet.count(d)>0) return;
+                            doneSet.insert(d);
+
+                            if (Cudd_IsConstant(d)) {
+                                sygusFile << "(define-fun n" << (size_t)(d) << " ( ";
+                                for (unsigned j = 0;j<relevantCUDDVarBFs.size();j++) {
+                                    sygusFile << "(x" << j << " Bool)";
+                                }
+                                sygusFile << ") Bool ";
+
+                                if (((size_t)d & 1)) {
+                                    // Constant 0
+                                    sygusFile << "false )\n";
+                                } else {
+                                    // Constant 1
+                                    sygusFile << "true )\n";
+                                }
+                            } else {
+
+                                DdNode *regular = Cudd_Regular(d);
+
+                                // Recurse first
+                                size_t thenSucc;
+                                size_t elseSucc;
+                                if (d==regular) {
+                                    recurseFn(Cudd_T(regular));
+                                    recurseFn(Cudd_E(regular));
+                                    thenSucc = (size_t)(Cudd_T(regular));
+                                    elseSucc = (size_t)(Cudd_E(regular));
+                                } else {
+                                    recurseFn(Cudd_Not(Cudd_T(regular)));
+                                    recurseFn(Cudd_Not(Cudd_E(regular)));
+                                    thenSucc = (size_t)(Cudd_Not(Cudd_T(regular)));
+                                    elseSucc = (size_t)(Cudd_Not(Cudd_E(regular)));
+                                }
+
+                                sygusFile << "(define-fun n" << (size_t)(d) << " ( ";
+                                for (unsigned j = 0;j<relevantCUDDVarBFs.size();j++) {
+                                    sygusFile << "(x" << j << " Bool)";
+                                }
+                                sygusFile << ") Bool ";
+
+
+                                // Find var
+                                unsigned int foundVar = (unsigned int)-1;
+                                for (unsigned int k=0;k<relevantCUDDVarBFs.size();k++) {
+                                    if (relevantCUDDVarBFs[k].getCuddNode()->index == regular->index) foundVar = k;
+                                }
+                                if (foundVar==(unsigned int)-1) throw 4; // Should not happen, but if it does, at least don't compute wrong result!
+
+                                if (regular!=d) sygusFile << "(not ";
+                                sygusFile << "(ite x" << foundVar;
+                                sygusFile << " (n" << thenSucc << " ";
+                                for (unsigned j = 0;j<relevantCUDDVarBFs.size();j++) {
+                                    sygusFile << "x" << j << " ";
+                                }
+                                sygusFile << ")";
+                                sygusFile << "(n" << elseSucc << " ";
+                                for (unsigned j = 0;j<relevantCUDDVarBFs.size();j++) {
+                                    sygusFile << "x" << j << " ";
+                                }
+                                sygusFile << ")";
+                                sygusFile << ")"; // ITE
+
+                                if (regular!=d) sygusFile << ")"; // Not
+                                sygusFile << ")\n";
+                            }
+                        };
+
+
+                        recurseFn(bddForInvariantCorrectnessEncoding);
+
+
+                        // Finally, the positive examples
+                        sygusFile << "( constraint (forall (";
+                        for (unsigned j = 0;j<relevantCUDDVarNames.size();j++) {
+                            sygusFile << "(x" << j << " Bool)";
+                        }
+                        sygusFile << ") (or (not ( n" << (size_t)bddForInvariantCorrectnessEncoding;
+                        for (unsigned j = 0;j<relevantCUDDVarNames.size();j++) {
+                            sygusFile << " x" << j;
+                        }
+                        sygusFile << ") ) (f";
+                        for (unsigned j = 0;j<relevantCUDDVarNames.size();j++) {
+                            sygusFile << " x" << j;
+                        }
+                        sygusFile << "))))\n";
+                        */
+
+
+
+                        // Go and go.
+                        std::function<double(DdNode*,std::vector<int>)> recurseFn2 = [&sygusFile, &relevantCUDDVarBFs, &recurseFn2](DdNode * d,std::vector<int> fix) {
+
+                            if (Cudd_IsConstant(d)) {
+                                if (((size_t)d & 1)) {
+                                    // Constant 0
+                                    return 0.0;
+                                } else {
+                                    // Constant 1
+                                    sygusFile << "( constraint (forall (";
+                                    for (unsigned int j=0;j<fix.size();j++) {
+                                        if (fix[j]==0) {
+                                            sygusFile << "(x" << j << " Bool)";
+                                        }
+                                    }
+                                    sygusFile << ")";
+                                    sygusFile << "(= ( f";
+                                    for (unsigned int j=0;j<fix.size();j++) {
+                                        if (fix[j]==0) {
+                                            sygusFile << " x" << j;
+                                        } else if (fix[j]==-1) {
+                                            sygusFile << " false";
+                                        } else if (fix[j]==1) {
+                                            sygusFile << " true";
+                                        } else {
+                                            std::cerr << "Illegal fix: " << fix[j] << std::endl;
+                                            throw 4;
+                                        }
+                                    }
+                                    sygusFile << ") true )))\n";
+                                    return 1.0;
+                                }
+                            } else {
+
+                                DdNode *regular = Cudd_Regular(d);
+
+                                // Find var
+                                unsigned int foundVar = (unsigned int)-1;
+                                for (unsigned int k=0;k<relevantCUDDVarBFs.size();k++) {
+                                    if (relevantCUDDVarBFs[k].getCuddNode()->index == regular->index) foundVar = k;
+                                }
+                                if (foundVar==(unsigned int)-1) throw 4; // Should not happen, but if it does, at least don't compute wrong result!
+
+                                if (regular==d) {
+                                    fix[foundVar] = 1;
+                                    double a = recurseFn2(Cudd_T(d),fix);
+                                    fix[foundVar] = -1;
+                                    double b = recurseFn2(Cudd_E(d),fix);
+                                    return a+b;
+                                } else {
+                                    fix[foundVar] = 1;
+                                    double a = recurseFn2(Cudd_Not(Cudd_T(regular)),fix);
+                                    fix[foundVar] = -1;
+                                    double b = recurseFn2(Cudd_Not(Cudd_E(regular)),fix);
+                                    return a+b;
+                                }
+                            }
+                        };
+
+                        std::vector<int> fixes;
+                        for (unsigned int l=0;l<relevantCUDDVarBFs.size();l++) {
+                            fixes.push_back(0);
+                        }
+
+                        std::cerr << "Nof Cubes: " << recurseFn2(bddForInvariantCorrectnessEncoding,fixes) << std::endl;
+
+
+
+
+                        sygusFile << "\n(check-synth)\n";
+
 
 
 
@@ -660,9 +891,9 @@ protected:
                 //std::cerr << "BufSiz:" << error.str().length() << std::endl;
                 throw SlugsException(false,"Solving Error");
             }
-
-
         }
+
+
 
 
 #else
