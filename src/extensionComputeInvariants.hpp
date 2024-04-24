@@ -594,6 +594,46 @@ protected:
                         filename3 << "/tmp/invariant" << i << "-unoptimized.dot";
                         BF_newDumpDot(*this,invariants[i],NULL,filename3.str());
 
+
+                        // Try existentially abstracting unnecessary variables.
+                        BF abstractedInvariant = invariants[i];
+                        BF abstractedInvariantSimplified = simplified;
+                        for (unsigned int j=0;j<relevantCUDDVarBFs.size();j++) {
+                            // First original
+                            BF tryBF = abstractedInvariant.ExistAbstractSingleVar(relevantCUDDVarBFs[j]);
+                            if ((tryBF & reachableAndWinningOrFirstNonWinningStateReached) == (abstractedInvariant & reachableAndWinningOrFirstNonWinningStateReached)) {
+                                // Keep
+                                abstractedInvariant = tryBF;
+                            }
+                            tryBF = abstractedInvariant.UnivAbstractSingleVar(relevantCUDDVarBFs[j]);
+                            if ((tryBF & reachableAndWinningOrFirstNonWinningStateReached) == (abstractedInvariant & reachableAndWinningOrFirstNonWinningStateReached)) {
+                                // Keep
+                                abstractedInvariant = tryBF;
+                            }
+                            tryBF = abstractedInvariantSimplified.ExistAbstractSingleVar(relevantCUDDVarBFs[j]);
+                            if ((tryBF & reachableAndWinningOrFirstNonWinningStateReached) == (abstractedInvariantSimplified & reachableAndWinningOrFirstNonWinningStateReached)) {
+                                // Keep
+                                abstractedInvariantSimplified = tryBF;
+                            }
+                            tryBF = abstractedInvariantSimplified.UnivAbstractSingleVar(relevantCUDDVarBFs[j]);
+                            if ((tryBF & reachableAndWinningOrFirstNonWinningStateReached) == (abstractedInvariantSimplified & reachableAndWinningOrFirstNonWinningStateReached)) {
+                                // Keep
+                                abstractedInvariantSimplified = tryBF;
+                            }
+
+                            // Simplify the...simplified version some more
+                            abstractedInvariantSimplified = abstractedInvariantSimplified.optimizeRestrict(reachableAndWinningOrFirstNonWinningStateReached);
+                        }
+
+                        std::ostringstream filenameS3;
+                        filenameS3 << "/tmp/invariant" << i << "-abstracted.dot";
+                        BF_newDumpDot(*this,abstractedInvariant,NULL,filenameS3.str());
+                        std::ostringstream filenameS4;
+                        filenameS4 << "/tmp/invariant" << i << "-simplified-abstracted.dot";
+                        BF_newDumpDot(*this,abstractedInvariantSimplified,NULL,filenameS4.str());
+
+
+
                         // Also print the cases of immediate specifiction violation separately
                         std::ostringstream filename2;
                         filename2 << "/tmp/invariant" << i << "-rightaway.dot";
@@ -626,7 +666,7 @@ protected:
                         std::ofstream sygusFile(outFileName.str());
                         sygusFile << "; Reactive Synthesis Invariant computation instance for invariant no. " << i << "\n; Variables (renamed):\n";
                         for (unsigned j = 0;j<relevantCUDDVarNames.size();j++) {
-                            sygusFile << "; var " << j << ": " << relevantCUDDVarNames[j] << "\n";
+                            sygusFile << "; var " << j << ": " << relevantCUDDVarNames[j] << ": worst case value " << (solver.val(startingVarsInvariantBases[i]+j)>0) << "\n";
                         }
 
                         // SyGuS File initial few lines
@@ -638,11 +678,13 @@ protected:
                              "(( B Bool ))"
                                      "(( B Bool (";
                         for (unsigned j = 0;j<relevantCUDDVarNames.size();j++) {
-                            sygusFile << "v" << j << " ";
+                            if (solver.val(startingVarsInvariantBases[i]+j)<0)
+                                sygusFile << "v" << j << " ";
+                            else
+                                sygusFile << "(not v" << j << ")";
                         }
-                        sygusFile << "(not B )"
-                                " (or B )"
-                                " (and B))"
+                        sygusFile << " (or B B)"
+                                " (and B B))"
                                      ")))\n";
 
                         // Negative examples first
@@ -757,8 +799,22 @@ protected:
                         */
 
 
+                        // Now encode that everything in "reachableAndWinning" needs to be accepted! For that, enumerate the "reachableAndWinning" elements closest to the worst case vector
+                        // Where it is OK if due to not having a single-neighbor, we miss the solution.
+                        BF closestCases = reachableAndWinning;
+                        for (unsigned int j=0;j<relevantCUDDVarBFs.size();j++) {
 
-                        // Go and go.
+                            BF bothPossible = closestCases.UnivAbstractSingleVar(relevantCUDDVarBFs[j]);
+                            if (solver.val(startingVarsInvariantBases[i]+j)>0) {
+                                // If both true and false are possible, it has to be true
+                                closestCases = closestCases & (!bothPossible | relevantCUDDVarBFs[j]);
+                            } else {
+                                closestCases = closestCases & (!bothPossible | !relevantCUDDVarBFs[j]);
+                            }
+                        }
+
+                        // Recursively enumerate the cases
+                        // Note: It should not be possible that a variable gets skipped.
                         std::function<double(DdNode*,std::vector<int>)> recurseFn2 = [&sygusFile, &relevantCUDDVarBFs, &recurseFn2](DdNode * d,std::vector<int> fix) {
 
                             if (Cudd_IsConstant(d)) {
@@ -767,18 +823,10 @@ protected:
                                     return 0.0;
                                 } else {
                                     // Constant 1
-                                    sygusFile << "( constraint (forall (";
-                                    for (unsigned int j=0;j<fix.size();j++) {
-                                        if (fix[j]==0) {
-                                            sygusFile << "(x" << j << " Bool)";
-                                        }
-                                    }
-                                    sygusFile << ")";
+                                    sygusFile << "( constraint ";
                                     sygusFile << "(= ( f";
                                     for (unsigned int j=0;j<fix.size();j++) {
-                                        if (fix[j]==0) {
-                                            sygusFile << " x" << j;
-                                        } else if (fix[j]==-1) {
+                                        if (fix[j]==-1) {
                                             sygusFile << " false";
                                         } else if (fix[j]==1) {
                                             sygusFile << " true";
@@ -787,7 +835,7 @@ protected:
                                             throw 4;
                                         }
                                     }
-                                    sygusFile << ") true )))\n";
+                                    sygusFile << ") true ))\n";
                                     return 1.0;
                                 }
                             } else {
@@ -799,7 +847,7 @@ protected:
                                 for (unsigned int k=0;k<relevantCUDDVarBFs.size();k++) {
                                     if (relevantCUDDVarBFs[k].getCuddNode()->index == regular->index) foundVar = k;
                                 }
-                                if (foundVar==(unsigned int)-1) throw 4; // Should not happen, but if it does, at least don't compute wrong result!
+                                if (foundVar==(unsigned int)-1) throw "Did not find variable"; // Should not happen, but if it does, at least don't compute wrong result!
 
                                 if (regular==d) {
                                     fix[foundVar] = 1;
@@ -822,16 +870,9 @@ protected:
                             fixes.push_back(0);
                         }
 
-                        std::cerr << "Nof Cubes: " << recurseFn2(bddForInvariantCorrectnessEncoding,fixes) << std::endl;
-
-
-
+                        std::cerr << "Nof Cubes: " << recurseFn2(closestCases.getCuddNode(),fixes) << std::endl;
 
                         sygusFile << "\n(check-synth)\n";
-
-
-
-
                     }
 
                     return;
