@@ -133,10 +133,11 @@ protected:
             //BF_newDumpDot(*this,reachable,NULL,"/tmp/currentreachable.dot");
         }*/
 
+        const bool beMoreStrict = false;
 
         // Compute states that are reachable when assumptions and guarantees are always satisfied.
         // ...both by going only through winning positions and not
-        BF reachableAndWinning = initEnv & initSys & winningPositions;
+        BF reachableAndWinning = beMoreStrict?(initEnv & initSys):(initEnv & initSys & winningPositions); //& winningPositions;
         //BF_newDumpDot(*this,reachableAndWinning,NULL,"/tmp/init.dot");
         BF oldReachable = mgr.constantFalse();
         while (reachableAndWinning!=oldReachable) {
@@ -147,6 +148,9 @@ protected:
         BF reachableAndWinningOrFirstNonWinningStateReached = (safetyEnv & safetySys & reachableAndWinning).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost) | reachableAndWinning;
 
         //reachableOldStyle = reachableAndWinningOrFirstNonWinningStateReached;
+        std::cerr << "#BDD nodes Winning positions: " << winningPositions.getSize() << "\n";
+        std::cerr << "#BDD nodes reachable and winning positions: " << reachableAndWinning.getSize() << "\n";
+
 
         // Compute which states need to be covered
         //BF statesReachingTransitions = (safetyEnv & safetySys).ExistAbstract(varCubePost);
@@ -357,7 +361,7 @@ protected:
             DdNode *one = Cudd_ReadOne(reachableAndWinning.manager()->getMgr());
             DdNode *zero = Cudd_Not(one);
 
-            DdNode *bddForInvariantCorrectnessEncoding = reachableAndWinning.getCuddNode();
+            DdNode *bddForInvariantCorrectnessEncoding = beMoreStrict?winningPositions.getCuddNode():reachableAndWinning.getCuddNode();
 
             if (negativeExamples.size()>0) {
                 for (unsigned int negativeExample=nofNegativeExamplesProcessedSoFar;negativeExample<negativeExamples.size();negativeExample++) {
@@ -632,6 +636,7 @@ protected:
                         filenameS4 << "/tmp/invariant" << i << "-simplified-abstracted.dot";
                         BF_newDumpDot(*this,abstractedInvariantSimplified,NULL,filenameS4.str());
 
+                        std::cerr << "Optimized Invariant " << i << " nof CUDD Nodes: " << abstractedInvariantSimplified.getSize() << "\n";
 
 
                         // Also print the cases of immediate specifiction violation separately
