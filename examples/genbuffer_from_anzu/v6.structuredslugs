@@ -1,0 +1,172 @@
+###############################################
+# Input variable definition
+###############################################
+[INPUT]
+StoB_REQ0
+StoB_REQ1
+StoB_REQ2
+RtoB_ACK0
+RtoB_ACK1
+FULL
+EMPTY
+
+###############################################
+# Output variable definition
+###############################################
+[OUTPUT]
+BtoS_ACK0
+BtoS_ACK1
+BtoS_ACK2
+BtoR_REQ0
+BtoR_REQ1
+stateG7_0
+stateG7_1
+ENQ
+DEQ
+stateG12
+SLC0
+SLC1
+
+###############################################
+# Environment specification
+###############################################
+[ENV_INIT]
+! StoB_REQ0
+! StoB_REQ1
+! StoB_REQ2
+! RtoB_ACK0
+! RtoB_ACK1
+! FULL
+EMPTY
+
+[ENV_TRANS]
+# A1
+((StoB_REQ0 & !BtoS_ACK0) -> (StoB_REQ0'))
+(BtoS_ACK0 -> (! StoB_REQ0'))
+((StoB_REQ1 & ! BtoS_ACK1) -> (StoB_REQ1'))
+(BtoS_ACK1 -> (! StoB_REQ1'))
+((StoB_REQ2 & ! BtoS_ACK2) -> (StoB_REQ2'))
+(BtoS_ACK2 -> (! StoB_REQ2'))
+
+# A3
+(! BtoR_REQ0 -> (! RtoB_ACK0'))
+(! BtoR_REQ1 -> (! RtoB_ACK1'))
+
+# A4
+((BtoR_REQ0 & RtoB_ACK0) -> (RtoB_ACK0'))
+((BtoR_REQ1 & RtoB_ACK1) -> (RtoB_ACK1'))
+(ENQ & !DEQ) -> (! EMPTY')
+((DEQ & !ENQ) -> (!FULL'))
+((ENQ <-> DEQ) -> ((FULL <-> (FULL')) & ( EMPTY <-> ( EMPTY'))))
+
+[ENV_LIVENESS]
+# A2
+(BtoR_REQ0 <-> RtoB_ACK0)
+(BtoR_REQ1 <-> RtoB_ACK1)
+
+###############################################
+# System specification
+###############################################
+[SYS_INIT]
+!BtoS_ACK0
+! BtoS_ACK1
+! BtoS_ACK2
+! BtoR_REQ0
+! BtoR_REQ1
+! stateG7_0
+stateG7_1
+!ENQ
+!DEQ
+! stateG12
+! SLC0
+! SLC1
+
+[SYS_TRANS]
+
+# G1 & G2
+((! StoB_REQ0 & (StoB_REQ0')) -> (! BtoS_ACK0'))
+((! BtoS_ACK0 & ! StoB_REQ0) -> (! BtoS_ACK0'))
+((! StoB_REQ1 & (StoB_REQ1')) -> (! BtoS_ACK1'))
+((! BtoS_ACK1 & ! StoB_REQ1) -> (! BtoS_ACK1'))
+((! StoB_REQ2 & (StoB_REQ2')) -> (! BtoS_ACK2'))
+((! BtoS_ACK2 & ! StoB_REQ2) -> (! BtoS_ACK2'))
+
+# G4
+((BtoS_ACK0 & StoB_REQ0) -> (BtoS_ACK0'))
+((BtoS_ACK1 & StoB_REQ1) -> (BtoS_ACK1'))
+((BtoS_ACK2 & StoB_REQ2) -> (BtoS_ACK2'))
+
+# G5
+((!BtoS_ACK0) | (! BtoS_ACK1))
+(!BtoS_ACK0) | (! BtoS_ACK2)	
+((! BtoS_ACK1) | (! BtoS_ACK2))
+
+# G6
+((BtoR_REQ0 & ! RtoB_ACK0) -> (BtoR_REQ0'))
+((BtoR_REQ1 & ! RtoB_ACK1) -> (BtoR_REQ1'))
+
+# G7
+((! BtoR_REQ0) | (! BtoR_REQ1))
+((BtoR_REQ0 & BtoR_REQ1) -> FALSE)	
+((! stateG7_1 & ! BtoR_REQ0 & BtoR_REQ1) -> (stateG7_1' & ! stateG7_0'))
+((stateG7_1 & BtoR_REQ0 & ! BtoR_REQ1) -> (! stateG7_1' & ! stateG7_0'))
+((! stateG7_1 & ! BtoR_REQ0 & ! BtoR_REQ1) -> (! stateG7_1' & stateG7_0'))
+((stateG7_1 & ! BtoR_REQ0 & ! BtoR_REQ1) -> (stateG7_1' & stateG7_0'))
+((! stateG7_1 & ! stateG7_0 & BtoR_REQ0 & ! BtoR_REQ1) -> (! stateG7_1' & ! stateG7_0'))	
+((stateG7_1 & ! stateG7_0 & ! BtoR_REQ0 & BtoR_REQ1) -> (stateG7_1' & ! stateG7_0'))	
+((! stateG7_1 & stateG7_0 & BtoR_REQ0) -> FALSE)	
+((stateG7_1 & stateG7_0 & BtoR_REQ1) -> FALSE)	
+
+# G8
+(RtoB_ACK0 -> (! BtoR_REQ0'))	
+(RtoB_ACK1 -> (! BtoR_REQ1'))
+
+# G9
+((!BtoS_ACK0 & (BtoS_ACK0')) -> (ENQ'))	
+((!BtoS_ACK0 & (BtoS_ACK0'))  -> (! SLC0' & ! SLC1'))	
+((! BtoS_ACK1 & (BtoS_ACK1')) -> (ENQ'))	
+((! BtoS_ACK1 & (BtoS_ACK1')) <-> (SLC0' & ! SLC1'))	
+((! BtoS_ACK2 & (BtoS_ACK2')) -> (ENQ'))	
+((! BtoS_ACK2 & (BtoS_ACK2')) <-> (! SLC0' & SLC1'))	
+(((BtoS_ACK0 | (!BtoS_ACK0')) & (BtoS_ACK1 | (! BtoS_ACK1')) & (BtoS_ACK2 | (! BtoS_ACK2'))) -> (!ENQ'))	
+
+# G10
+((RtoB_ACK0 & (! RtoB_ACK0')) -> (DEQ'))	
+((RtoB_ACK1 & (! RtoB_ACK1')) -> (DEQ'))	
+(((! RtoB_ACK0 | (RtoB_ACK0')) & (! RtoB_ACK1 | (RtoB_ACK1'))) -> (!DEQ'))	
+
+# G11
+(FULL & !DEQ) -> !ENQ
+( EMPTY -> !DEQ)	
+
+# G12
+#((! stateG12 &  EMPTY) -> (! stateG12'))
+#((! stateG12 & DEQ  ) -> (! stateG12'))	
+#((! stateG12 & ! EMPTY & !DEQ) -> (stateG12'))	
+#((stateG12 & !DEQ  ) -> (stateG12'))	
+#((stateG12 & DEQ  ) -> (! stateG12'))	
+
+[SYS_LIVENESS]
+
+# G1+G2
+(StoB_REQ0 <-> BtoS_ACK0)
+(StoB_REQ1 <-> BtoS_ACK1)
+(StoB_REQ2 <-> BtoS_ACK2)
+
+# G12
+#(! stateG12)
+
+
+
+[SYS_TRANS]
+# Invariant: Don't ACK too much
+(! BtoS_ACK0' | ! BtoS_ACK1')
+(! BtoS_ACK0' | ! BtoS_ACK2')
+(! BtoS_ACK1' | ! BtoS_ACK2')
+
+# Invariant after G6+G7: Inv1
+BtoR_REQ0' | ! BtoR_REQ1' | ! stateG7_0' | ! stateG7_1'
+# Inv2
+! BtoR_REQ0' | ! BtoR_REQ1'
+BtoR_REQ0' & stateG7_0' -> stateG7_1'
+

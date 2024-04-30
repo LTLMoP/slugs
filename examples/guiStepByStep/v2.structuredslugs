@@ -1,0 +1,210 @@
+[INPUT]
+clickPointSelection
+# sliderMove
+# clickSizeSelection
+# clickSave
+forward
+backward
+# runningPreviewThread
+# runningPreciseComputationThread
+# runningRescalingThread
+
+
+[OUTPUT]
+showPointSelectionPage
+showSliderPage
+# showPleaseWaitPage
+# showResolutionSelectionPage
+    
+pointEdit0
+pointEdit1
+pointEdit2
+pointEdit3
+
+allPointsSelected
+# startPreviewThread
+# startPreciseComputationThread
+# startRescalingThread
+# needToStartPreviewThread
+# updatePreview
+updatePointSelectionWindow
+
+forwardButtonEnabled
+
+
+[ENV_TRANS]
+
+# Navigation through the pages
+# ! forward' | ! backward'
+# showResolutionSelectionPage -> !forward'
+showPointSelectionPage -> !backward'
+  
+# Other input restrictions
+# sliderMove' -> showSliderPage
+clickPointSelection' -> showPointSelectionPage
+
+# Only go forward if possile
+forward' -> forwardButtonEnabled
+   
+# Threads only run after having been started
+# startPreviewThread -> runningPreviewThread'
+# !runningPreviewThread & !startPreviewThread -> !runningPreviewThread'
+
+# startPreciseComputationThread -> runningPreciseComputationThread'
+# !runningPreciseComputationThread & !startPreciseComputationThread -> !runningPreciseComputationThread' 
+
+# startRescalingThread -> runningRescalingThread'
+# !runningRescalingThread & !startRescalingThread -> !runningRescalingThread'
+
+# Buttons can only be clicked if available
+clickPointSelection' -> showPointSelectionPage
+# sliderMove' -> showSliderPage
+# clickSizeSelection' -> showResolutionSelectionPage
+# clickSave' -> showResolutionSelectionPage
+
+# Saving can only be done when a resolution has been selected
+# clickSave' -> clickSizeSelection'
+
+# On the "please wait screen", the user cannot click backwards when the precise
+# computation thread is just finishing.
+# runningPreciseComputationThread -> (runningPreciseComputationThread' | !backward')
+
+[ENV_LIVENESS]
+# Thread termination
+# ! runningPreviewThread | startPreviewThread
+# ! runningRescalingThread | startRescalingThread
+# ! runningPreciseComputationThread | startPreciseComputationThread
+
+
+# We always eventually proceed
+! showPointSelectionPage | clickPointSelection'
+
+
+[ENV_INIT]
+! forward
+! backward
+! clickPointSelection
+# ! sliderMove
+# ! clickSizeSelection
+# ! clickSave
+# ! runningPreviewThread
+# ! runningPreciseComputationThread
+# ! runningRescalingThread
+
+
+[SYS_INIT]
+showPointSelectionPage
+! showSliderPage
+pointEdit0
+! pointEdit1
+! pointEdit2
+! pointEdit3
+# ! needToStartPreviewThread
+! forwardButtonEnabled
+# ! startPreviewThread
+# ! startPreciseComputationThread
+# ! startRescalingThread
+! allPointsSelected
+# ! updatePreview
+# ! updatePointSelectionWindow
+! forwardButtonEnabled
+
+
+
+
+
+[SYS_TRANS]
+
+# Progression of visible page
+showPointSelectionPage & forward' -> showSliderPage'
+# showSliderPage & forward' -> showPleaseWaitPage'
+# showPleaseWaitPage & forward' -> showResolutionSelectionPage'
+
+    
+showSliderPage & backward' -> showPointSelectionPage'
+# showPleaseWaitPage & backward' -> showSliderPage'
+# showResolutionSelectionPage & backward' ->showSliderPage'
+    
+showPointSelectionPage & !backward' & !forward' -> showPointSelectionPage'
+showSliderPage & !backward' & !forward' -> showSliderPage'
+# showResolutionSelectionPage & !backward' & !forward' -> showResolutionSelectionPage'
+
+# Only one page visible
+showPointSelectionPage' -> (!showSliderPage') 
+# & !showPleaseWaitPage' & !showResolutionSelectionPage')
+showSliderPage' -> (!showPointSelectionPage') 
+# & !showResolutionSelectionPage' & !showPointSelectionPage')
+# showPleaseWaitPage' -> (!showSliderPage' & !showResolutionSelectionPage' & !showPointSelectionPage')
+
+
+
+# PointEditing
+pointEdit0 -> (!pointEdit1 & !pointEdit2 & !pointEdit3)
+pointEdit1 -> (!pointEdit2 & !pointEdit3)
+pointEdit2 -> (!pointEdit3)
+pointEdit0 & clickPointSelection' -> pointEdit1' & updatePointSelectionWindow'
+pointEdit1 & clickPointSelection' -> pointEdit2' & updatePointSelectionWindow'
+pointEdit2 & clickPointSelection' -> pointEdit3' & updatePointSelectionWindow'
+pointEdit3 & clickPointSelection' -> pointEdit0' & updatePointSelectionWindow'
+pointEdit0 & !clickPointSelection' -> pointEdit0' & updatePointSelectionWindow'
+pointEdit1 & !clickPointSelection' -> pointEdit1' & updatePointSelectionWindow'
+pointEdit2 & !clickPointSelection' -> pointEdit2' & updatePointSelectionWindow'
+pointEdit3 & !clickPointSelection' -> pointEdit3' & updatePointSelectionWindow'
+allPointsSelected' <-> allPointsSelected | pointEdit3 & clickPointSelection'
+
+# When is the forward button enabled?
+showPointSelectionPage' -> (forwardButtonEnabled' <-> allPointsSelected')
+# showPleaseWaitPage -> !forwardButtonEnabled
+
+# =======================================================
+# The following constraint is the one that is too strict!
+# =======================================================
+# showSliderPage -> (forwardButtonEnabled <-> (!needToStartPreviewThread && !runningPreviewThread))
+
+
+# Preview Thread starting
+# runningPreviewThread' -> !startPreviewThread'
+# needToStartPreviewThread' <-> ((needToStartPreviewThread & !startPreviewThread') | (showPointSelectionPage & forward')) | sliderMove'
+
+
+# PreciseComputation
+# showSliderPage & forward' <-> startPreciseComputationThread'
+# showPleaseWaitPage -> (showPleaseWaitPage' | showResolutionSelectionPage' | backward')
+# showPleaseWaitPage -> (showPleaseWaitPage' <-> !(runningPreciseComputationThread & !runningPreciseComputationThread' | backward'))
+# showResolutionSelectionPage -> !runningPreciseComputationThread
+
+# RescalingThread
+# (showResolutionSelectionPage' & !showResolutionSelectionPage) <-> startRescalingThread'
+
+# Don't start the additional thread if it is still running
+# runningRescalingThread' -> !startRescalingThread'
+# runningPreviewThread' -> !startPreviewThread'
+# runningPreciseComputationThread -> !startPreciseComputationThread'
+
+# Now check if on the "slider page", the forward button can always be enabled if the preview task is not running...
+# Intuitively, if the scaler thread is still happening, this shouldn't occur.
+# (this specification part has been removed)s
+
+[SYS_LIVENESS]
+# Preview Thread not always running
+# ! needToStartPreviewThread | startPreviewThread
+
+# We eventually move on from the Please Wait page
+# ! showPleaseWaitPage
+
+# Eventually no rescaling anymore
+# ! runningRescalingThread' | startRescalingThread
+
+# We always eventually enable the forward button if the environment does not keep us from doing so
+# ----> Deactivated because it will make the specification unrealizable.
+# forwardButtonEnabled' | sliderMove' | showResolutionSelectionPage
+
+
+
+[SYS_TRANS]
+# =========================Invariants==================================
+# At every point, only one invariant is used.
+pointEdit0' -> (!pointEdit1' & !pointEdit2' & !pointEdit3')
+pointEdit1' -> (!pointEdit2' & !pointEdit3')
+pointEdit2' -> (!pointEdit3')
+
