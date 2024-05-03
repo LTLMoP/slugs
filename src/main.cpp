@@ -99,7 +99,7 @@ const char *commandLineArguments[] = {
     "--environmentFriendlySynthesis","Performs environment-friendly realizability checking according to the construction from the TACAS 2019 paper 'Environmentally-friendly GR(1) Synthesis' by Majumdar, Piterman, and Schmuck, using a quadruply nested fixpoint.",
     "--useHeuristic","Modifier for --environmentFriendlySynthesis: When computing winningPositions for environment-friendly strategies a sound but incomplete heuristic is used which only explores b==a within EnvironmentFriendlySynthesis.",
     "--computeInvariants","Compute invariants that explain a synthesized strategy and/or the strategic choices that need to be made by an implementation of the specification",
-    "--computeInvariantsDontCare","Add don't care support for the '--computeInvariants' plugin, which can simplify the invariants but makes distributing the counter-examples to invariants less precise.",
+    "--computeInvariantsBeMoreStrict","Increase the initially reachable states in the '--computeInvariants' plugin beyond the initial winning ones, and consider invariants capturing all non-winning states. This makes some computed invariants easier to read.",
     //-END-COMMAND-LINE-ARGUMENT-LIST
 };
 
@@ -173,7 +173,7 @@ OptionCombination optionCombinations[] = {
     OptionCombination("--computeCNFFormOfTheSpecification",XComputeCNFFormOfTheSpecification<GR1Context>::makeInstance),
     OptionCombination("--computeIncompleteInformationEstimator",XIncompleteInformationEstimatorSynthesis<GR1Context>::makeInstance),
     OptionCombination("--computeInterestingRunOfTheSystem",XComputeInterestingRunOfTheSystem<GR1Context>::makeInstance),
-    OptionCombination("--computeInvariants --computeInvariantsDontCare",XComputeInvariants<GR1Context,true>::makeInstance),
+    OptionCombination("--computeInvariants --computeInvariantsBeMoreStrict",XComputeInvariants<GR1Context,true>::makeInstance),
     OptionCombination("--computeInvariants",XComputeInvariants<GR1Context,false>::makeInstance),
     OptionCombination("--computeWeakenedSafetyAssumptions",XComputeWeakenedSafetyAssumptions<GR1Context>::makeInstance),
     OptionCombination("--cooperativeGR1Strategy --explicitStrategy --jsonOutput --simpleRecovery --sysInitRoboticsSemantics",XExtractExplicitStrategy<XRoboticsSemantics<XCooperativeGR1Strategy<GR1Context>>,true,true>::makeInstance),

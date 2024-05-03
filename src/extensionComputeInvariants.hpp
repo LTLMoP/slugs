@@ -32,7 +32,7 @@ public:
 /**
  * A class for computing invariants implied by the maximally permissive strategy (and probably later a bit more)
  */
-template<class T, bool supportForDontCare> class XComputeInvariants : public T {
+template<class T, bool beMoreStrict> class XComputeInvariants : public T {
 protected:
 
     using T::initSys;
@@ -59,23 +59,18 @@ protected:
     using T::computeWinningPositions;
     using T::winningPositions;
 
-    std::string satSolver;
     int nofInvariants;
     std::vector<std::vector<int> > negativeExamples; // +1: TRUE, -1: FALSE, 0: don't care
 
-    XComputeInvariants<T,supportForDontCare>(std::list<std::string> &filenames) : T(filenames) {
+    XComputeInvariants<T,beMoreStrict>(std::list<std::string> &filenames) : T(filenames) {
     }
 
     void init(std::list<std::string> &filenames) {
         T::init(filenames);
 
-        if (filenames.size()<2) {
-            throw SlugsException(false,"Error: Need file name of SAT solver and number of invariants to analyze invariants.");
+        if (filenames.size()<1) {
+            throw SlugsException(false,"Error: Need number of invariants to analyze invariants.");
         }
-
-        satSolver = filenames.front();
-        filenames.pop_front();
-        std::cerr << "Using SAT Solver: " << satSolver << std::endl;
 
         std::istringstream is(filenames.front());
         filenames.pop_front();
@@ -132,8 +127,6 @@ protected:
             reachableOldStyle |= (safetyEnv & safetySys & reachableOldStyle & winningPositions).ExistAbstract(varCubePre).SwapVariables(varVectorPre,varVectorPost);
             //BF_newDumpDot(*this,reachable,NULL,"/tmp/currentreachable.dot");
         }*/
-
-        const bool beMoreStrict = false;
 
         // Compute states that are reachable when assumptions and guarantees are always satisfied.
         // ...both by going only through winning positions and not
@@ -888,30 +881,23 @@ protected:
                 std::vector<int> nextNegativeExample;
                 for (unsigned int k=0;k<relevantCUDDVars.size();k++) {
                     // Which direction to prefer is random to make negative examples for uniform
-                    if (supportForDontCare && ((rest & relevantCUDDVarBFs[k]).ExistAbstractSingleVar(relevantCUDDVarBFs[k]) == (rest & !relevantCUDDVarBFs[k]).ExistAbstractSingleVar(relevantCUDDVarBFs[k]))) {
-                        // Dont't case!
-                        nextNegativeExample.push_back(0);
-                    } else  {
-                        if (rng() & 1) {
-                            if ((rest & relevantCUDDVarBFs[k]).isFalse()) {
-                                nextNegativeExample.push_back(-1);
-                                rest &= !relevantCUDDVarBFs[k];
-                            } else {
-                                nextNegativeExample.push_back(1);
-                                rest &= relevantCUDDVarBFs[k];
-                            }
+                    if (rng() & 1) {
+                        if ((rest & relevantCUDDVarBFs[k]).isFalse()) {
+                            nextNegativeExample.push_back(-1);
+                            rest &= !relevantCUDDVarBFs[k];
                         } else {
-                            if ((rest & !relevantCUDDVarBFs[k]).isFalse()) {
-                                nextNegativeExample.push_back(1);
-                                rest &= relevantCUDDVarBFs[k];
-                            } else {
-                                nextNegativeExample.push_back(-1);
-                                rest &= !relevantCUDDVarBFs[k];
-                            }
+                            nextNegativeExample.push_back(1);
+                            rest &= relevantCUDDVarBFs[k];
+                        }
+                    } else {
+                        if ((rest & !relevantCUDDVarBFs[k]).isFalse()) {
+                            nextNegativeExample.push_back(1);
+                            rest &= relevantCUDDVarBFs[k];
+                        } else {
+                            nextNegativeExample.push_back(-1);
+                            rest &= !relevantCUDDVarBFs[k];
                         }
                     }
-
-                    // TODO: Can this be done in a smarter way? Enumerating some cube instead?
                 }
 
                 std::cerr << "New negative example (no." << negativeExamples.size() << "): ";
@@ -952,7 +938,7 @@ protected:
 
 public:
     static GR1Context* makeInstance(std::list<std::string> &filenames) {
-        return new XComputeInvariants<T,supportForDontCare>(filenames);
+        return new XComputeInvariants<T,beMoreStrict>(filenames);
     }
 };
 

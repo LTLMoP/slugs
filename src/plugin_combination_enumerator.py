@@ -77,7 +77,7 @@ listOfCommandLineParameters = [
     ("environmentFriendlySynthesis","Performs environment-friendly realizability checking according to the construction from the TACAS 2019 paper 'Environmentally-friendly GR(1) Synthesis' by Majumdar, Piterman, and Schmuck, using a quadruply nested fixpoint."),
     ("useHeuristic","Modifier for --environmentFriendlySynthesis: When computing winningPositions for environment-friendly strategies a sound but incomplete heuristic is used which only explores b==a within EnvironmentFriendlySynthesis."),
     ("computeInvariants","Compute invariants that explain a synthesized strategy and/or the strategic choices that need to be made by an implementation of the specification"),
-    ("computeInvariantsDontCare","Add don't care support for the '--computeInvariants' plugin, which can simplify the invariants but makes distributing the counter-examples to invariants less precise.")
+    ("computeInvariantsBeMoreStrict","Increase the initially reachable states in the '--computeInvariants' plugin beyond the initial winning ones, and consider invariants capturing all non-winning states. This makes some computed invariants easier to read.")
 ]
 
 # Which command line parameters can be combined?
@@ -171,7 +171,7 @@ combinableParameters = [
     ("interactiveStrategy","cooperativeGR1Strategy"),
     
     # Compute Invariants
-    ("computeInvariants","computeInvariantsDontCare"),
+    ("computeInvariants","computeInvariantsBeMoreStrict"),
     
     # Misc
     ("IROSfastslow","extractExplicitPermissiveStrategy"),
@@ -249,7 +249,7 @@ uncombinableParameters = [
     ("extractExplicitPermissiveStrategy","cooperativeGR1Strategy"),
     ("twoDimensionalCost","cooperativeGR1Strategy"),
 
-] + combineWithAllOtherParameters("computeIncompleteInformationEstimator") + combineWithAllOtherParameters("computeAbstractWinningTrace") + combineWithAllOtherParameters("computeInterestingRunOfTheSystem") + combineWithAllOtherParameters("analyzeSafetyLivenessInteraction") + combineWithAllOtherParameters("analyzeAssumptions") + combineWithAllOtherParameters("computeCNFFormOfTheSpecification") + combineWithAllOtherParameters("analyzeInterleaving") + combineWithAllOtherParametersBut("analyzeInitialPositions",["restrictToReachableStates"]) + combineWithAllOtherParametersBut("restrictToReachableStates",["analyzeInitialPositions"]) + combineWithAllOtherParametersBut("nonDeterministicMotion",["sysInitRoboticsSemantics","interactiveStrategy","extractExplicitPermissiveStrategy","simpleSymbolicStrategy","symbolicStrategy","nonDeterministicMotionSelfLoopLivenessAssumption"]) + combineWithAllOtherParametersBut("nonDeterministicMotionSelfLoopLivenessAssumption",["sysInitRoboticsSemantics","interactiveStrategy","extractExplicitPermissiveStrategy","simpleSymbolicStrategy","symbolicStrategy","nonDeterministicMotion"]) + combineWithAllOtherParameters("computeWeakenedSafetyAssumptions") + combineWithAllOtherParameters("synthesisProfiling") + combineWithAllOtherParametersBut("environmentFriendlyStrategy",["useHeuristic","jsonOutput"]) + combineWithAllOtherParametersBut("environmentFriendlySynthesis",["useHeuristic"]) +  combineWithAllOtherParametersBut("useHeuristic",["environmentFriendlySynthesis","environmentFriendlyStrategy","jsonOutput"]) + combineWithAllOtherParametersBut("computeInvariants",["computeInvariantsDontCare"]) + combineWithAllOtherParametersBut("computeInvariantsDontCare",["computeInvariants"])
+] + combineWithAllOtherParameters("computeIncompleteInformationEstimator") + combineWithAllOtherParameters("computeAbstractWinningTrace") + combineWithAllOtherParameters("computeInterestingRunOfTheSystem") + combineWithAllOtherParameters("analyzeSafetyLivenessInteraction") + combineWithAllOtherParameters("analyzeAssumptions") + combineWithAllOtherParameters("computeCNFFormOfTheSpecification") + combineWithAllOtherParameters("analyzeInterleaving") + combineWithAllOtherParametersBut("analyzeInitialPositions",["restrictToReachableStates"]) + combineWithAllOtherParametersBut("restrictToReachableStates",["analyzeInitialPositions"]) + combineWithAllOtherParametersBut("nonDeterministicMotion",["sysInitRoboticsSemantics","interactiveStrategy","extractExplicitPermissiveStrategy","simpleSymbolicStrategy","symbolicStrategy","nonDeterministicMotionSelfLoopLivenessAssumption"]) + combineWithAllOtherParametersBut("nonDeterministicMotionSelfLoopLivenessAssumption",["sysInitRoboticsSemantics","interactiveStrategy","extractExplicitPermissiveStrategy","simpleSymbolicStrategy","symbolicStrategy","nonDeterministicMotion"]) + combineWithAllOtherParameters("computeWeakenedSafetyAssumptions") + combineWithAllOtherParameters("synthesisProfiling") + combineWithAllOtherParametersBut("environmentFriendlyStrategy",["useHeuristic","jsonOutput"]) + combineWithAllOtherParametersBut("environmentFriendlySynthesis",["useHeuristic"]) +  combineWithAllOtherParametersBut("useHeuristic",["environmentFriendlySynthesis","environmentFriendlyStrategy","jsonOutput"]) + combineWithAllOtherParametersBut("computeInvariants",["computeInvariantsBeMoreStrict"]) + combineWithAllOtherParametersBut("computeInvariantsBeMoreStrict",["computeInvariants"])
 
 # Which ones require (one of) another parameter(s)
 requiredParameters = [
@@ -258,7 +258,7 @@ requiredParameters = [
     ("jsonOutput",["explicitStrategy","environmentFriendlyStrategy"]),
     ("nonDeterministicMotionSelfLoopLivenessAssumption",["nonDeterministicMotion"]),
     ("useHeuristic",["environmentFriendlySynthesis","environmentFriendlyStrategy"]),
-    ("computeInvariantsDontCare",["computeInvariants"]),
+    ("computeInvariantsBeMoreStrict",["computeInvariants"]),
 ]
 
 # -------------------------------------------------------
@@ -414,10 +414,10 @@ listOfCommandLineCombinationToClassInstantiationMappers.append(permissiveStrat)
 
 # Compute Invariants
 def computeInvariants(params):
-    dontCare = "computeInvariantsDontCare" in params
+    dontCare = "computeInvariantsBeMoreStrict" in params
     if "computeInvariants" in params:
         ret = [("XComputeInvariants","true" if dontCare else "false")]
-        params.difference_update(["computeInvariants","computeInvariantsDontCare"])
+        params.difference_update(["computeInvariants","computeInvariantsBeMoreStrict"])
         return ret
     return []
 listOfCommandLineCombinationToClassInstantiationMappers.append(computeInvariants)

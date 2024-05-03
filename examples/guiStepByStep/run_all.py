@@ -22,8 +22,8 @@ for inputFile in allInputFiles:
       
         foundInvariantNumber = True
         # --computeInvariantsDontCare 
-        print("Execute: ","../../src/slugs --computeInvariants "+base+".slugsin ../../src/satSolver.py "+str(currentInvariantNumber)+" > "+base+".invariant 2>&1")
-        os.system("../../src/slugs --computeInvariants "+base+".slugsin ../../src/satSolver.py "+str(currentInvariantNumber)+" " + " ".join(negativeExamplesCarriedOver) + " > "+base+".invariant 2>&1")==0
+        print("Execute: ","../../src/slugs --computeInvariants "+base+".slugsin "+str(currentInvariantNumber)+" > "+base+".invariant 2>&1")
+        os.system("../../src/slugs --computeInvariants "+base+".slugsin "+str(currentInvariantNumber)+" " + " ".join(negativeExamplesCarriedOver) + " > "+base+".invariant 2>&1")==0
         with open(base+".invariant","r") as inFile:
           allLines = inFile.readlines()
           for line in allLines:
