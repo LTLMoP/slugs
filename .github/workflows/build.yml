@@ -28,8 +28,6 @@ jobs:
       with:
          # we need the submodules.
          submodules: recursive
-    - name: Update submodule.
-      run: git submodule update --remote
     - name: Install various packages needed 
       run: |
          if [ "$RUNNER_OS" == "Linux" ]; then
