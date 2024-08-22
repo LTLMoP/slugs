@@ -58,6 +58,7 @@ OBJECTS       = main.o \
 		../lib/cadical/src/instantiate.o \
 		../lib/cadical/src/internal.o \
 		../lib/cadical/src/ipasir.o \
+                ../lib/cadical/src/lidruptracer.o \
 		../lib/cadical/src/limit.o \
 		../lib/cadical/src/logging.o \
 		../lib/cadical/src/lookahead.o \
